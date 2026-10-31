@@ -14,7 +14,7 @@ services:
         value: "22"
       - key: APP_PASSWORD
         sync: false
-      - key: HR_PASSWORD
+      - key: MANAGER_PASSWORD
         sync: false
       - key: GEMINI_API_KEY
         sync: false

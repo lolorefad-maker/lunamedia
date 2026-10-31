@@ -65,6 +65,8 @@
     calendar: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
     chart: '<path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/>',
     logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>',
+    pin: '<path d="M12 17v5"/><path d="M9 3h6l-1 6 3 3v2H7v-2l3-3z"/>',
+    announce: '<path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/>',
   };
   const icon = (n) => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${ICONS[n] || ''}</svg>`;
 
@@ -109,7 +111,7 @@
 
   // ---------- state ----------
   const DEFAULT_STATE = {
-    v: 2, meta: {}, custom: [], deleted: {}, activity: [], chat: [], chatLead: '', settingsU: 0,
+    v: 2, meta: {}, custom: [], deleted: {}, activity: [], board: [], boardSeen: 0, chat: [], chatLead: '', settingsU: 0,
     settings: { name: '', agency: '', revenueTarget: 3000, theme: 'auto', aiData: true, waTemplate: DEFAULT_TEMPLATE },
   };
   function load() {
@@ -142,7 +144,8 @@
   let AUTH = { base: normBase(CFG.apiBase), token: '', role: 'admin', user: '' };
   try { AUTH = { ...AUTH, ...JSON.parse(localStorage.getItem(AUTH_KEY) || '{}') }; } catch (e) { /* ignore */ }
   const saveAuth = () => { try { localStorage.setItem(AUTH_KEY, JSON.stringify(AUTH)); } catch (e) { /* ignore */ } };
-  const isViewer = () => AUTH.role === 'viewer';
+  if (AUTH.role === 'viewer') { AUTH.token = ''; AUTH.role = 'admin'; } // حساب الـ HR القديم انلغى → دخول من جديد
+  const isManager = () => AUTH.role === 'manager';
   let SERVER_STATUS = null;
 
   async function apiFetch(p, opts = {}) {
@@ -176,19 +179,18 @@
   function syncPayload() {
     const settings = {};
     for (const k of M.SYNC_SETTINGS) settings[k] = state.settings[k];
-    return { v: 2, meta: state.meta, custom: state.custom, deleted: state.deleted, activity: state.activity, settings, settingsU: state.settingsU };
+    return { v: 2, meta: state.meta, custom: state.custom, deleted: state.deleted, activity: state.activity, board: state.board, settings, settingsU: state.settingsU };
   }
   function applyRemote(remote) {
     // ادمج اللي جاي من السيرفر مع النسخة المحلية (عشان أي تعديل صار أثناء الطلب ما يضيع)
     const before = JSON.stringify(syncPayload());
     const m = M.mergeState(syncPayload(), remote);
-    state.meta = m.meta; state.custom = m.custom; state.deleted = m.deleted; state.activity = m.activity; state.settingsU = m.settingsU;
+    state.meta = m.meta; state.custom = m.custom; state.deleted = m.deleted; state.activity = m.activity; state.board = m.board; state.settingsU = m.settingsU;
     for (const k of M.SYNC_SETTINGS) if (m.settings[k] !== undefined) state.settings[k] = m.settings[k];
     invalidate(); persist();
     return before !== JSON.stringify(syncPayload());
   }
   function scheduleSync(ms = 1200) {
-    if (isViewer()) return;
     SYNC.dirty = true;
     clearTimeout(SYNC.timer);
     if (AUTH.token) SYNC.timer = setTimeout(syncNow, ms);
@@ -197,18 +199,20 @@
     if (!AUTH.token) return;
     if (SYNC.busy) { SYNC.dirty = true; return; }
     SYNC.busy = true; SYNC.dirty = false; updateSyncUi();
+    let fresh = false;
     try {
-      const r = isViewer()
-        ? await apiFetch('/api/state') // حساب الـ HR بيقرأ بس
-        : await apiFetch('/api/state', { method: 'PUT', body: JSON.stringify({ state: syncPayload() }) });
+      const r = await apiFetch('/api/state', { method: 'PUT', body: JSON.stringify({ state: syncPayload() }) });
+      const unseen = unseenBoard();
       const changed = applyRemote(r.state);
       SYNC.last = Date.now(); SYNC.err = '';
       if (changed) softRefresh();
+      if (unseenBoard() > unseen) { fresh = true; toast('في تعليمات جديدة من المدير', { label: 'اقرأها', fn: () => { location.hash = '#overview'; } }); }
     } catch (e) { SYNC.err = e.message; }
     finally {
       SYNC.busy = false; updateSyncUi();
       if (SYNC.dirty) scheduleSync(4000);
     }
+    return fresh; // true = وصلت تعليمات جديدة من المدير (وطلع تنبيهها)
   }
   function syncText() {
     if (!AUTH.token) return 'مش مسجّل دخول';
@@ -223,8 +227,8 @@
   }
   function softRefresh() {
     if (!document.getElementById('main').innerHTML) return;
-    if (view === 'assistant' || view === 'settings') { updateBadge(); return; }
-    refresh();
+    if (view !== 'assistant' && view !== 'settings') refresh();
+    updateBadge();
   }
 
   // ---------- leads model ----------
@@ -248,7 +252,8 @@
     cache = [...SEED, ...state.custom].map((l) => {
       const m = state.meta[l.id] || {};
       const sc = score(l);
-      return { ...l, status: m.status || 'new', notes: m.notes || [], followUp: m.followUp || '', deal: +m.deal || 0, lastContact: m.lastContact || '', wonAt: m.wonAt || '', score: sc, heat: heatOf(sc) };
+      const notes = m.notes || [];
+      return { ...l, status: m.status || 'new', notes, mgrNotes: notes.filter((n) => n.mgr), followUp: m.followUp || '', deal: +m.deal || 0, lastContact: m.lastContact || '', wonAt: m.wonAt || '', score: sc, heat: heatOf(sc) };
     });
     return cache;
   }
@@ -283,6 +288,13 @@
     } else { setMeta(id, { lastContact: today() }); }
     refresh();
   }
+  // ----- تعليمات المدير -----
+  const activeBoard = () => (state.board || []).filter((b) => !b.del && b.text);
+  const unseenBoard = () => activeBoard().filter((b) => b.t > (state.boardSeen || 0)).length;
+  const mgrFlag = (l) => {
+    const n = l.mgrNotes[l.mgrNotes.length - 1];
+    return n ? `<span class="mgr-flag" data-tip="${esc(`<span class='tip-eyebrow'>ملاحظة المدير</span>${esc(n.text.slice(0, 140))}`)}">${icon('pin')}</span>` : '';
+  };
   function due(L = leads()) { const t = today(); return L.filter((l) => l.followUp && l.followUp <= t && !CLOSED.has(l.status)); }
 
   function stats(L = leads()) {
@@ -379,10 +391,9 @@
       <div class="header-titles"><p class="eyebrow">${eyebrow}</p><h1 class="title">${title}</h1></div>
       ${opts.search === false ? '' : `<label class="search">${icon('search')}<input id="global-search" type="search" placeholder="دوّر على عميل، رقم، أو منطقة..." autocomplete="off"></label>`}
       <button class="icon-btn" data-action="theme" aria-label="تبديل الوضع" data-tip="الوضع: ${themeLbl}">${icon('moon')}</button>
-      <button class="icon-btn" data-admin data-action="due" aria-label="المتابعات" data-tip="${d ? `${d} متابعة مستحقة` : 'ما في متابعات مستحقة'}">${icon('bell')}${d ? '<span class="dot"></span>' : ''}</button>
-      ${isViewer()
-        ? `<span class="viewer-badge">${icon('shield')} حساب HR · عرض فقط</span><button class="btn btn-ghost" data-action="logout">${icon('logout')} خروج</button>`
-        : opts.actions ?? `<button class="btn btn-primary btn-lg" data-action="add-lead">${icon('plus')}<span class="lbl">إضافة عميل</span></button>`}
+      <button class="icon-btn" data-action="due" aria-label="المتابعات" data-tip="${d ? `${d} متابعة مستحقة` : 'ما في متابعات مستحقة'}">${icon('bell')}${d ? '<span class="dot"></span>' : ''}</button>
+      ${isManager() ? `<span class="role-badge" data-tip="حساب المدير: كل الصلاحيات، وملاحظاتك بتبين للكول سنتر">${icon('shield')} مدير</span>` : ''}
+      ${opts.actions ?? `<button class="btn btn-primary btn-lg" data-action="add-lead">${icon('plus')}<span class="lbl">إضافة عميل</span></button>`}
     </header>`;
   }
   function bars(items) {
@@ -507,10 +518,12 @@
     const acts = state.activity.slice(-6).reverse();
     const funnel = STATUSES.map((st) => ({ label: st.label, v: L.filter((l) => l.status === st.id).length, go: `status=${st.id}` }));
     const sec = countBy(L, 'sector').map(([k, v]) => ({ label: k, v, go: `sector=${encodeURIComponent(k)}` }));
+    const board = boardCard();
     mounts.push(mountArea);
     return `
     ${header('نظرة عامة على العملاء', `أهلاً، ${esc(name)}`)}
     <div class="grid">
+      ${board}
       ${kpi('إجمالي العملاء', fmt(s.total), 'users', `<span class="chip">${icon('up')} ${fmt(s.furniture)} مفروشات</span>`)}
       ${kpi('معهم رقم', fmt(s.withPhone), 'phone', `<span class="chip">${s.pctPhone}% · ${fmt(s.mobile)} واتساب</span>`)}
       ${kpi('تم التواصل', fmt(s.touched), 'send', s.weekTouches ? `<span class="chip">${icon('up')} ${s.weekTouches} هالأسبوع</span>` : '<span class="chip neutral">لسا ما بلّشت</span>')}
@@ -574,6 +587,27 @@
       </section>
     </div>`;
   };
+
+  // لوحة تعليمات المدير: المدير بيكتب وبيشيل، والكول سنتر بيقرأ
+  function boardCard() {
+    const mgr = isManager();
+    const items = activeBoard().slice().sort((a, b) => b.t - a.t);
+    const seen = state.boardSeen || 0;
+    if (items.length && items[0].t > seen) { state.boardSeen = items[0].t; persist(); } // فتح اللوحة = قرأ التعليمات
+    if (!items.length && !mgr) return '';
+    const typing = $('#board-text') ? $('#board-text').value : ''; // ما نمسح اللي عم ينكتب لما توصل مزامنة
+    return `<section class="card span-12 board">
+      <div class="card-head"><span class="board-icon">${icon('announce')}</span><div><h3>تعليمات المدير</h3><p class="sub">${mgr ? 'اللي بتنشره هون بيبين لكل الكول سنتر أول ما يفتحوا اللوحة' : 'اقرأها قبل ما تبلّش اتصالات'}</p></div></div>
+      ${mgr ? `<div class="board-compose">
+        <textarea class="textarea" id="board-text" rows="2" placeholder="مثلاً: اليوم ركّزوا على معارض المفروشات بالرصيفة، وعرض الإعلانات عليه خصم 20%">${esc(typing)}</textarea>
+        <button class="btn btn-primary" data-action="board-post">${icon('send')} انشر للفريق</button>
+      </div>` : ''}
+      <div class="board-list">${items.map((b) => `<div class="board-item ${b.t > seen ? 'new' : ''}">
+        <div class="board-text">${esc(b.text)}</div>
+        <div class="board-meta">${byTag(b.by || 'المدير')}<span class="hint">${relTime(b.t)}</span>${mgr ? `<button class="btn btn-sm btn-ghost" data-action="board-del" data-bid="${esc(b.id)}">${icon('trash')} شيلها</button>` : ''}</div>
+      </div>`).join('') || '<div class="empty">لسا ما نشرت تعليمات للفريق</div>'}</div>
+    </section>`;
+  }
 
   function activityItem(a) {
     const l = a.id ? byId(a.id) : null;
@@ -656,7 +690,7 @@
     const rows = L.slice((F.page - 1) * PAGE, F.page * PAGE);
     body.innerHTML = rows.length ? rows.map((l) => `
       <tr data-open="${l.id}">
-        <td class="c-name"><div class="cell-name">${avatar(l.name)}<div><b>${esc(l.name)}</b><small>${esc(l.type || l.sector)}</small></div></div></td>
+        <td class="c-name"><div class="cell-name">${avatar(l.name)}<div><b>${esc(l.name)}</b><small>${esc(l.type || l.sector)}</small></div>${mgrFlag(l)}</div></td>
         <td class="c-city">${esc(l.city)}</td>
         <td class="c-phone">${phoneCell(l)}</td>
         <td class="c-rate">${stars(l)}</td>
@@ -692,7 +726,7 @@
             ${items.slice(0, lim).map((l) => `
               <div class="kcard" draggable="true" data-card="${l.id}" data-open="${l.id}">
                 <b>${esc(l.name)}</b><small>${esc(l.type || l.sector)} · ${esc(l.city)}</small>
-                <div class="row">${heat(l)}${l.deal ? `<small class="num">${fmt(l.deal)} د.أ</small>` : l.followUp ? `<small>${icon('calendar')} ${arDate(l.followUp)}</small>` : ''}</div>
+                <div class="row">${heat(l)}${mgrFlag(l)}${l.deal ? `<small class="num">${fmt(l.deal)} د.أ</small>` : l.followUp ? `<small>${icon('calendar')} ${arDate(l.followUp)}</small>` : ''}</div>
               </div>`).join('')}
             ${items.length > lim ? `<button class="more-btn" data-action="more" data-col="${st.id}">+ ${items.length - lim} كمان</button>` : ''}
             ${!items.length ? '<div class="empty">فاضي</div>' : ''}
@@ -894,7 +928,7 @@
       p += `\n\n## قائمة العملاء\nالاسم | القطاع | النوع | المدينة | الهاتف | التقييم | عدد التقييمات | الحالة | الأولوية | الخدمة المقترحة | موعد المتابعة | قيمة الصفقة\n${L.map(leadLine).join('\n')}`;
     }
     if (lead) {
-      p += `\n\n## العميل اللي بنحكي عنه هلأ\n${leadLine(lead)}\nالعنوان: ${lead.address || '-'}\nالدوام: ${lead.hours || '-'}\nالملاحظات: ${lead.notes.map((n) => n.text).join(' / ') || 'ما في'}`;
+      p += `\n\n## العميل اللي بنحكي عنه هلأ\n${leadLine(lead)}\nالعنوان: ${lead.address || '-'}\nالدوام: ${lead.hours || '-'}\nالملاحظات: ${lead.notes.map((n) => (n.mgr ? '(ملاحظة المدير) ' : '') + n.text).join(' / ') || 'ما في'}`;
     }
     return p;
   }
@@ -922,7 +956,7 @@
     const b2 = $('#chat-send'); if (b2) b2.disabled = false;
   }
 
-  // ----- report (للإدارة / HR) -----
+  // ----- report (تقرير الإدارة) -----
   const R = { period: 'month', by: '', logAll: false };
   const PERIODS = [['today', 'اليوم'], ['week', 'آخر 7 أيام'], ['month', 'هالشهر'], ['all', 'كل الوقت']];
   const ACT_LABEL = { call: 'اتصال', wa: 'واتساب', note: 'ملاحظة', status: 'تغيير حالة' };
@@ -1001,7 +1035,6 @@
     <section class="card"><div class="report-filters">
       <div class="seg">${PERIODS.map(([k, t]) => `<button class="${R.period === k ? 'on' : ''}" data-action="report-period" data-p="${k}">${t}</button>`).join('')}</div>
       <select class="select" data-rfilter="by" aria-label="الموظف"><option value="">كل الفريق</option>${D.names.map((n) => `<option ${R.by === n ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
-      ${isViewer() ? `<button class="btn btn-ghost btn-sm" data-action="report-export">${icon('download')} تصدير Excel</button>` : ''}
       <span class="count-note">${R.by ? `تقرير ${esc(R.by)}` : 'كل الفريق'} · ${periodLbl}</span>
     </div></section>
     <div class="grid">
@@ -1107,6 +1140,7 @@
       <section class="card stack">
         <div class="card-head"><h3>السيرفر والمزامنة</h3></div>
         <div class="info-grid">
+          ${info('الحساب', isManager() ? 'مدير' : 'كول سنتر')}
           ${info('السيرفر', `<span class="ltr">${esc(AUTH.base || location.host)}</span>`)}
           ${info('المزامنة', `<span id="sync-status-2">${esc(syncText())}</span>`)}
           ${info('Gemini', ss ? (ss.ai ? 'شغّال ✓' : 'مش مفعّل على السيرفر') : '...')}
@@ -1161,7 +1195,7 @@
     if (!l) { closeDrawer(); return; }
     const info = (k, v, wide) => `<div class="info ${wide ? 'wide' : ''}"><span>${k}</span><b>${v}</b></div>`;
     const draft = aiDrafts[l.id];
-    const ro = isViewer();
+    const mgr = isManager();
     const typing = $('#note-text') ? $('#note-text').value : ''; // ما نمسح ملاحظة نص كتابة لما توصل مزامنة
     $('#drawer').innerHTML = `
       <div class="drawer-head">
@@ -1170,13 +1204,17 @@
         <button class="icon-btn" data-action="close-drawer" aria-label="إغلاق">${icon('x')}</button>
       </div>
       <div class="drawer-body">
-        <div class="quick" ${ro ? 'hidden' : ''}>
+        ${l.mgrNotes.length ? `<div class="mgr-box" role="note">
+          <h4>${icon('pin')} ملاحظة المدير</h4>
+          ${l.mgrNotes.slice().reverse().map((n) => `<div class="mgr-note">${esc(n.text)}<small>${esc(n.by || 'المدير')} · ${relTime(n.t)}</small></div>`).join('')}
+        </div>` : ''}
+        <div class="quick">
           <button class="btn btn-primary" data-action="wa" data-id="${l.id}" ${l.mobile ? '' : 'disabled'}>${icon('wa')} واتساب</button>
           ${l.phone ? `<a class="btn btn-ghost" href="tel:${l.phone}" data-action="call" data-id="${l.id}">${icon('phone')} اتصال</a>
           <button class="btn btn-ghost" data-action="copy" data-text="${esc(l.phone)}">${icon('copy')} نسخ الرقم</button>` : ''}
           ${l.maps ? `<a class="btn btn-ghost" href="${esc(l.maps)}" target="_blank" rel="noopener">${icon('map')} الخريطة</a>` : ''}
         </div>
-        <div class="drawer-section"><h4>الحالة</h4>${ro ? pill(l.status) : `<div class="status-grid">${STATUSES.map((s) => `<button class="${l.status === s.id ? 'on' : ''}" data-action="set-status" data-id="${l.id}" data-status="${s.id}">${s.label}</button>`).join('')}</div>`}</div>
+        <div class="drawer-section"><h4>الحالة</h4><div class="status-grid">${STATUSES.map((s) => `<button class="${l.status === s.id ? 'on' : ''}" data-action="set-status" data-id="${l.id}" data-status="${s.id}">${s.label}</button>`).join('')}</div></div>
         <div class="info-grid">
           ${info('الهاتف', phoneCell(l))}
           ${info('التقييم', stars(l))}
@@ -1187,12 +1225,11 @@
           ${info('العنوان', esc(l.address || '—'), true)}
           ${info('الخدمة المقترحة', esc(l.service || '—'), true)}
         </div>
-        ${ro ? `<div class="info-grid">${info('موعد المتابعة', arDate(l.followUp))}${info('قيمة الصفقة', l.deal ? fmt(l.deal) + ' د.أ' : '—')}</div>` : ''}
-        <div class="form-grid" ${ro ? 'hidden' : ''}>
+        <div class="form-grid">
           <div class="field"><label>موعد المتابعة</label><input class="input" type="date" data-meta="followUp" data-id="${l.id}" value="${esc(l.followUp)}"></div>
           <div class="field"><label>قيمة الصفقة (د.أ)</label><input class="input num" type="number" min="0" step="10" data-meta="deal" data-id="${l.id}" value="${l.deal || ''}" placeholder="0"></div>
         </div>
-        <div class="drawer-section" ${ro ? 'hidden' : ''}>
+        <div class="drawer-section">
           <h4>المساعد الذكي</h4>
           <div class="quick">
             <button class="btn btn-soft" data-action="ai-draft" data-id="${l.id}">${icon('sparkles')} اكتبلي رسالة أولى</button>
@@ -1202,12 +1239,12 @@
             ${draft !== '…' ? `<div class="quick" style="margin-top:8px"><button class="btn btn-sm btn-ghost" data-action="copy" data-text="${esc(draft)}">${icon('copy')} نسخ</button>${l.mobile ? `<button class="btn btn-sm btn-primary" data-action="wa-draft" data-id="${l.id}">${icon('wa')} ابعتها واتساب</button>` : ''}</div>` : ''}` : ''}
         </div>
         <div class="drawer-section">
-          <h4>الملاحظات</h4>
-          ${ro ? '' : `<textarea class="textarea" id="note-text" placeholder="شو صار بالمكالمة؟ شو طلب؟"></textarea>`}
-          <div class="quick" style="margin-top:8px" ${ro ? 'hidden' : ''}><button class="btn btn-sm btn-primary" data-action="add-note" data-id="${l.id}">إضافة ملاحظة</button></div>
-          <div class="notes">${l.notes.slice().reverse().map((n) => `<div class="note">${esc(n.text)}<small>${relTime(n.t)}${n.by ? ' · ' + esc(n.by) : ''}</small></div>`).join('') || (isViewer() ? '<div class="hint">ما في ملاحظات</div>' : '')}</div>
+          <h4>${mgr ? 'ملاحظة للكول سنتر' : 'الملاحظات'}</h4>
+          <textarea class="textarea" id="note-text" placeholder="${mgr ? 'شو لازم يعرف الموظف قبل ما يتصل؟ (بتبين مميّزة لكل الفريق)' : 'شو صار بالمكالمة؟ شو طلب؟'}"></textarea>
+          <div class="quick" style="margin-top:8px"><button class="btn btn-sm btn-primary" data-action="add-note" data-id="${l.id}">${mgr ? `${icon('pin')} ثبّت ملاحظة للفريق` : 'إضافة ملاحظة'}</button></div>
+          <div class="notes">${l.notes.filter((n) => !n.mgr).reverse().map((n) => `<div class="note">${esc(n.text)}<small>${relTime(n.t)}${n.by ? ' · ' + esc(n.by) : ''}</small></div>`).join('')}</div>
         </div>
-        ${isCustom(l.id) && !ro ? `<button class="btn btn-danger btn-sm" data-action="delete-lead" data-id="${l.id}" style="align-self:flex-start">${icon('trash')} حذف العميل</button>` : ''}
+        ${isCustom(l.id) ? `<button class="btn btn-danger btn-sm" data-action="delete-lead" data-id="${l.id}" style="align-self:flex-start">${icon('trash')} حذف العميل</button>` : ''}
       </div>`;
     if (typing) $('#note-text').value = typing;
   }
@@ -1275,7 +1312,7 @@
       '#': i + 1, 'الاسم': l.name, 'القطاع': l.sector, 'النوع': l.type || '', 'المدينة': l.city, 'رقم الهاتف': l.phone || 'غير مسجّل',
       'واتساب': l.mobile ? 'https://wa.me/' + intl(l.phone) : '', 'التقييم': l.rating ?? '', 'عدد التقييمات': l.reviews ?? '', 'العنوان': l.address || '',
       'الدوام': l.hours || '', 'الخدمة المقترحة': l.service || '', 'رابط قوقل ماب': l.maps || '', 'الحالة': ST[l.status].label, 'الأولوية': l.score,
-      'موعد المتابعة': l.followUp, 'قيمة الصفقة': l.deal || '', 'آخر تواصل': l.lastContact, 'ملاحظات': l.notes.map((n) => n.text).join(' | '), 'المصدر': l.source || '',
+      'موعد المتابعة': l.followUp, 'قيمة الصفقة': l.deal || '', 'آخر تواصل': l.lastContact, 'ملاحظات': l.notes.map((n) => (n.mgr ? '[المدير] ' : '') + n.text).join(' | '), 'المصدر': l.source || '',
     }));
     const name = `leads-${today()}`;
     if (!window.XLSX) {
@@ -1409,6 +1446,8 @@
   function updateBadge() {
     const d = stats().due;
     const b = $('#badge-due'); b.hidden = !d; b.textContent = d;
+    const u = unseenBoard();
+    const nb = $('#badge-board'); nb.hidden = !u; nb.textContent = u;
   }
   function refresh() {
     if (view === 'leads' && $('#leads-body')) { renderLeadsTable(); if (drawerId) renderDrawer(); }
@@ -1418,7 +1457,6 @@
     if (!AUTH.token) return;
     const v = (location.hash || '#overview').slice(1).split('?')[0];
     view = VIEWS[v] ? v : 'overview';
-    if (isViewer()) view = 'report'; // حساب الـ HR بيشوف التقرير بس
     render();
     window.scrollTo(0, 0);
   }
@@ -1429,13 +1467,11 @@
   }
 
   // ---------- events ----------
-  const VIEWER_ACTIONS = new Set(['close-drawer', 'copy', 'theme', 'logout', 'sync-now', 'close-modal', 'area-days', 'report-period', 'report-export', 'report-more']);
   document.addEventListener('click', (e) => {
     const t = e.target;
     const actEl = t.closest('[data-action]');
     if (actEl && !actEl.disabled && actEl.getAttribute('aria-disabled') !== 'true') {
       const a = actEl.dataset.action, id = actEl.dataset.id;
-      if (isViewer() && !VIEWER_ACTIONS.has(a)) { e.preventDefault(); return; }
       switch (a) {
         case 'wa': e.preventDefault(); e.stopPropagation(); openWa(id); return;
         case 'call': e.stopPropagation(); contactAttempt(id, 'call'); return; // href=tel: يكمل طبيعي
@@ -1447,8 +1483,27 @@
           if (!txt) return;
           $('#note-text').value = '';
           const l = byId(id);
-          setMeta(id, { notes: [...l.notes, { t: Date.now(), text: txt, by: AUTH.user || '' }], lastContact: today() });
-          log({ id, type: 'note' }); save(); refresh(); return;
+          const note = { t: Date.now(), text: txt, by: AUTH.user || (isManager() ? 'المدير' : '') };
+          if (isManager()) note.mgr = true; // بتبين مميّزة لكل الكول سنتر (والسيرفر بيوقّعها)
+          setMeta(id, { notes: [...l.notes, note], lastContact: today() });
+          log({ id, type: 'note' }); save(); refresh();
+          if (note.mgr) toast('انثبتت الملاحظة للفريق ✓');
+          return;
+        }
+        case 'board-post': {
+          const ta = $('#board-text');
+          const txt = ta ? ta.value.trim() : '';
+          if (!isManager() || !txt) return;
+          const now = Date.now();
+          state.board.push({ id: 'b' + now.toString(36) + Math.random().toString(36).slice(2, 6), t: now, u: now, text: txt, by: AUTH.user || 'المدير' });
+          ta.value = '';
+          save(); render(); toast('انتشرت التعليمات لكل الفريق ✓'); return;
+        }
+        case 'board-del': {
+          const b = state.board.find((x) => x.id === actEl.dataset.bid);
+          if (!isManager() || !b || !confirm('أكيد بدك تشيل هالتعليمات عن كل الفريق؟')) return;
+          Object.assign(b, { del: true, text: '', u: Date.now() }); delete b.sig;
+          save(); render(); return;
         }
         case 'delete-lead':
           if (!confirm('أكيد بدك تحذف هالعميل؟')) return;
@@ -1484,13 +1539,13 @@
           if (!confirm('بنمسح النسخة اللي على هالجهاز وبننزّل نسخة السيرفر بدالها. أي تعديل ما تزامن بيروح. متأكد؟')) return;
           apiFetch('/api/state').then((r) => {
             const m = r.state || M.emptyState();
-            state.meta = m.meta || {}; state.custom = m.custom || []; state.deleted = m.deleted || {}; state.activity = m.activity || [];
+            state.meta = m.meta || {}; state.custom = m.custom || []; state.deleted = m.deleted || {}; state.activity = m.activity || []; state.board = m.board || [];
             state.settingsU = m.settingsU || 0;
             for (const k of M.SYNC_SETTINGS) if (m.settings && m.settings[k] !== undefined) state.settings[k] = m.settings[k];
             invalidate(); persist(); render(); toast('نزلت نسخة السيرفر ✓');
           }).catch((e) => toast(e.message));
           return;
-        case 'sync-now': syncNow().then(() => toast(SYNC.err ? SYNC.err : 'تمت المزامنة ✓')); return;
+        case 'sync-now': syncNow().then((fresh) => { if (!fresh) toast(SYNC.err ? SYNC.err : 'تمت المزامنة ✓'); }); return;
         case 'logout': if (confirm('بدك تسجّل خروج؟ بياناتك بتضل محفوظة على الجهاز.')) logout(); return;
         case 'reset-template': state.settings.waTemplate = DEFAULT_TEMPLATE; state.settingsU = Date.now(); save(); render(); return;
         case 'test-ai': testAi(); return;
@@ -1521,7 +1576,6 @@
   document.addEventListener('change', (e) => {
     const t = e.target;
     if (t.dataset.rfilter) { R[t.dataset.rfilter] = t.value; render(); return; }
-    if (isViewer()) return;
     if (t.dataset.statusFor) { setStatus(t.dataset.statusFor, t.value); refresh(); return; }
     if (t.dataset.filter) { F[t.dataset.filter] = t.type === 'checkbox' ? t.checked : t.value; F.page = 1; renderLeadsTable(); return; }
     if (t.dataset.pfilter) { P[t.dataset.pfilter] = t.value; render(); return; }
@@ -1595,7 +1649,6 @@
   function showApp() {
     $('#login').hidden = true;
     $('.app').hidden = false;
-    document.body.classList.toggle('role-viewer', isViewer());
   }
   function logout(msg) {
     AUTH.token = ''; saveAuth();
@@ -1614,7 +1667,7 @@
       const res = await fetch(base + '/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }), signal: AbortSignal.timeout(90000) });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
-      const user = $('#login-user').value.trim() || (j.role === 'viewer' ? 'HR' : state.settings.name || '');
+      const user = $('#login-user').value.trim() || (j.role === 'manager' ? 'المدير' : state.settings.name || '');
       AUTH = { base, token: j.token, role: j.role || 'admin', user }; saveAuth();
       $('#login-pass').value = '';
       msg.textContent = 'عم بنزّل العملاء...';

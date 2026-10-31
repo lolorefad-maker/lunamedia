@@ -11,7 +11,7 @@ loadDotEnv(path.join(__dirname, '.env'));
 
 const PORT = +process.env.PORT || 3000;
 const PASSWORD = process.env.APP_PASSWORD || '';
-const HR_PASSWORD = process.env.HR_PASSWORD || ''; // حساب عرض فقط (تقارير)
+const MANAGER_PASSWORD = process.env.MANAGER_PASSWORD || ''; // حساب المدير: كل الصلاحيات + ملاحظات للكول سنتر
 const SECRET = process.env.SESSION_SECRET || 'zl-local-secret';
 const GEMINI_KEY = process.env.GEMINI_API_KEY || '';
 const MODELS = (process.env.GEMINI_MODELS || 'gemini-3.6-flash,gemini-3.8-flash,gemini-3.5-flash,gemini-3.1-flash-lite,gemini-flash-lite-latest')
@@ -60,8 +60,8 @@ let queue = Promise.resolve();
 const serialized = (fn) => { const p = queue.then(fn, fn); queue = p.catch(() => {}); return p; };
 
 // ---------- auth ----------
-// admin = كل شي، viewer = قراءة التقارير بس
-const ROLE_PASSWORDS = () => ({ admin: PASSWORD, viewer: HR_PASSWORD });
+// admin = موظف الكول سنتر (APP_PASSWORD)، manager = المدير (MANAGER_PASSWORD): نفس الصلاحيات + ملاحظات المدير
+const ROLE_PASSWORDS = () => ({ admin: PASSWORD, manager: MANAGER_PASSWORD });
 const sessionToken = (role) => role + '.' + crypto.createHmac('sha256', SECRET).update(`zl-v2:${role}:${ROLE_PASSWORDS()[role]}`).digest('base64url');
 const safeEqual = (a, b) => {
   const x = crypto.createHash('sha256').update(String(a)).digest();
@@ -71,8 +71,26 @@ const safeEqual = (a, b) => {
 function roleOf(req) {
   const tok = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
   const role = tok.split('.')[0];
-  if ((role !== 'admin' && role !== 'viewer') || !ROLE_PASSWORDS()[role]) return null;
+  if ((role !== 'admin' && role !== 'manager') || !ROLE_PASSWORDS()[role]) return null;
   return safeEqual(tok, sessionToken(role)) ? role : null;
+}
+
+// ---------- ملاحظات المدير ----------
+// السيرفر بيوقّع كل ملاحظة/تعليمات بتيجي من المدير. لو إجت ملاحظة مدير من حساب موظف
+// بدون توقيع صحيح بتنشال، فما حدا بيقدر يكتب أو يمسح باسم المدير.
+const mgrSig = (s) => crypto.createHmac('sha256', SECRET).update('zl-mgr-v1|' + s).digest('base64url').slice(0, 24);
+const noteSig = (n) => mgrSig(`note|${n.t}|${n.text}|${n.by || ''}`);
+const boardSig = (b) => mgrSig(`board|${b.id}|${b.t}|${b.text || ''}|${b.by || ''}|${b.u || 0}|${b.del ? 1 : 0}`);
+function guardManagerItems(s, role) {
+  const ok = (item, sign) => {
+    if (role === 'manager') { item.sig = sign(item); return true; }
+    return typeof item.sig === 'string' && safeEqual(item.sig, sign(item));
+  };
+  for (const m of Object.values(s.meta || {})) {
+    if (m && Array.isArray(m.notes)) m.notes = m.notes.filter((n) => !(n && n.mgr) || ok(n, noteSig));
+  }
+  s.board = Array.isArray(s.board) ? s.board.filter((b) => b && typeof b === 'object' && ok(b, boardSig)) : [];
+  return s;
 }
 const attempts = new Map();
 function tooMany(ip) {
@@ -131,7 +149,7 @@ function readJson(req, limit) {
 
 async function api(req, res, url) {
   const route = `${req.method} ${url.pathname}`;
-  if (route === 'GET /api/status') return sendJson(res, 200, { ok: true, auth: !!PASSWORD, hr: !!HR_PASSWORD, ai: !!GEMINI_KEY, storage: store.kind });
+  if (route === 'GET /api/status') return sendJson(res, 200, { ok: true, auth: !!PASSWORD, manager: !!MANAGER_PASSWORD, ai: !!GEMINI_KEY, storage: store.kind });
   if (route === 'POST /api/login') {
     if (!PASSWORD) return sendJson(res, 503, { error: 'السيرفر ما إله كلمة سر — حط APP_PASSWORD' });
     const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
@@ -139,7 +157,7 @@ async function api(req, res, url) {
     attempts.get(ip).push(Date.now());
     const body = await readJson(req, 10000);
     const pw = String(body.password || '');
-    const role = safeEqual(pw, PASSWORD) ? 'admin' : HR_PASSWORD && safeEqual(pw, HR_PASSWORD) ? 'viewer' : null;
+    const role = MANAGER_PASSWORD && safeEqual(pw, MANAGER_PASSWORD) ? 'manager' : safeEqual(pw, PASSWORD) ? 'admin' : null;
     if (!role) return sendJson(res, 401, { error: 'كلمة السر غلط' });
     return sendJson(res, 200, { token: sessionToken(role), role });
   }
@@ -151,10 +169,10 @@ async function api(req, res, url) {
   }
   if (route === 'GET /api/state') return sendJson(res, 200, { state: (await store.get()) || emptyState() });
   if (route === 'PUT /api/state') {
-    if (role !== 'admin') return sendJson(res, 403, { error: 'حساب الـ HR للعرض بس' });
     const body = await readJson(req, 8e6);
+    const incoming = guardManagerItems(body.state && typeof body.state === 'object' ? body.state : {}, role);
     const merged = await serialized(async () => {
-      const m = mergeState((await store.get()) || emptyState(), body.state || {});
+      const m = mergeState((await store.get()) || emptyState(), incoming);
       await store.put(m);
       return m;
     });
@@ -215,5 +233,5 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`لوحة العملاء شغالة على http://localhost:${PORT}  (storage: ${store.kind}, ai: ${GEMINI_KEY ? 'on' : 'off'}, password: ${PASSWORD ? 'set' : 'MISSING'}, hr: ${HR_PASSWORD ? 'set' : 'off'})`);
+  console.log(`لوحة العملاء شغالة على http://localhost:${PORT}  (storage: ${store.kind}, ai: ${GEMINI_KEY ? 'on' : 'off'}, password: ${PASSWORD ? 'set' : 'MISSING'}, manager: ${MANAGER_PASSWORD ? 'set' : 'off'})`);
 });

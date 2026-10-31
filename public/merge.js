@@ -1,5 +1,6 @@
 // دمج بيانات المزامنة — نفس الملف بيشتغل بالمتصفح وعلى السيرفر.
 // كل عميل إله "u" (وقت آخر تعديل): الأحدث بيكسب، والملاحظات والنشاطات بتنجمع.
+// board = تعليمات المدير للكول سنتر (الأحدث بيكسب، والممسوحة بتضل كعلامة del).
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
   else root.ZLMerge = factory();
@@ -10,12 +11,16 @@
   const MAX_ACTIVITY = 5000;
 
   function emptyState() {
-    return { v: 2, meta: {}, custom: [], deleted: {}, activity: [], settings: {}, settingsU: 0 };
+    return { v: 2, meta: {}, custom: [], deleted: {}, activity: [], board: [], settings: {}, settingsU: 0 };
   }
 
   function mergeNotes(a, b) {
     const m = new Map();
-    for (const n of [...(a || []), ...(b || [])]) if (n && n.text) m.set(n.t + '|' + n.text, n);
+    for (const n of [...(a || []), ...(b || [])]) {
+      if (!n || !n.text) continue;
+      const k = n.t + '|' + n.text, p = m.get(k);
+      if (!p || !p.sig || n.sig) m.set(k, n); // النسخة الموقّعة من السيرفر بتكسب
+    }
     return [...m.values()].sort((x, y) => x.t - y.t);
   }
 
@@ -54,6 +59,14 @@
       if (a && a.t) am.set(`${a.t}|${a.id || ''}|${a.type}|${a.to || ''}`, a);
     }
     out.activity = [...am.values()].sort((x, y) => x.t - y.t).slice(-MAX_ACTIVITY);
+
+    const bm = new Map();
+    for (const b of [...(A.board || []), ...(B.board || [])]) {
+      if (!b || !b.id) continue;
+      const p = bm.get(b.id), bu = b.u || 0, pu = p ? p.u || 0 : -1;
+      if (!p || bu > pu || (bu === pu && b.sig && !p.sig)) bm.set(b.id, b);
+    }
+    out.board = [...bm.values()].sort((x, y) => (x.t || 0) - (y.t || 0));
 
     const sa = A.settingsU || 0, sb = B.settingsU || 0;
     const s = sb > sa ? B.settings : A.settings;

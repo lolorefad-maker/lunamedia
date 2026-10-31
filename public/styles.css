@@ -614,9 +614,27 @@ table.mx td:not(.zero):hover { outline: 2px solid var(--sage); }
   .toolbar .select { flex: 1 1 140px; }
 }
 
-/* ===== HR / viewer ===== */
-.role-viewer [data-admin] { display: none !important; }
-.viewer-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 99px; background: var(--slate-50); color: var(--slate); font-size: 12.5px; font-weight: 600; }
+/* ===== المدير وتعليماته ===== */
+.role-badge { display: inline-flex; align-items: center; gap: 6px; align-self: center; padding: 4px 12px; border-radius: 99px; background: var(--gold-50); color: var(--gold); font-size: 12.5px; font-weight: 600; }
+.role-badge svg.i { width: 15px; height: 15px; }
+.nav-badge.mgr { background: var(--gold); }
+.board-icon { width: 36px; height: 36px; border-radius: 12px; display: grid; place-items: center; background: var(--gold-50); color: var(--gold); flex: none; }
+.board-compose { display: flex; gap: 10px; align-items: flex-end; margin-bottom: 14px; }
+.board-compose .textarea { flex: 1; min-height: 60px; }
+.board-list { display: flex; flex-direction: column; gap: 10px; }
+.board-item, .mgr-box { background: var(--gold-50); border-radius: 14px; padding: 12px 14px; border-inline-start: 4px solid var(--gold); }
+.board-item.new { box-shadow: 0 0 0 2px var(--gold); }
+.board-text { white-space: pre-wrap; line-height: 1.8; font-size: 14px; color: var(--ink); }
+.board-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 8px; font-size: 12.5px; }
+.board-meta .btn { margin-inline-start: auto; }
+.mgr-box h4 { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; font-size: 13px; font-weight: 700; color: var(--gold); }
+.mgr-box h4 svg.i { width: 16px; height: 16px; }
+.mgr-note { font-size: 13.5px; line-height: 1.8; white-space: pre-wrap; color: var(--ink); }
+.mgr-note + .mgr-note { border-top: 1px dashed var(--line-2); margin-top: 8px; padding-top: 8px; }
+.mgr-note small { display: block; margin-top: 2px; font-size: 11.5px; color: var(--muted); }
+.mgr-flag { width: 24px; height: 24px; border-radius: 8px; display: inline-grid; place-items: center; background: var(--gold-50); color: var(--gold); flex: none; }
+.mgr-flag svg.i { width: 14px; height: 14px; }
+@media (max-width: 560px) { .board-compose { flex-direction: column; align-items: stretch; } }
 .rt-wrap { overflow-x: auto; border-radius: var(--r-md); }
 table.rt { width: 100%; border-collapse: collapse; }
 table.rt.wide { min-width: 640px; }
