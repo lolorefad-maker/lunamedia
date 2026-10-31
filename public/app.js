@@ -989,6 +989,7 @@
     if (!l) { closeDrawer(); return; }
     const info = (k, v, wide) => `<div class="info ${wide ? 'wide' : ''}"><span>${k}</span><b>${v}</b></div>`;
     const draft = aiDrafts[l.id];
+    const typing = $('#note-text') ? $('#note-text').value : ''; // ما نمسح ملاحظة نص كتابة لما توصل مزامنة
     $('#drawer').innerHTML = `
       <div class="drawer-head">
         ${avatar(l.name)}
@@ -1034,6 +1035,7 @@
         </div>
         ${isCustom(l.id) ? `<button class="btn btn-danger btn-sm" data-action="delete-lead" data-id="${l.id}" style="align-self:flex-start">${icon('trash')} حذف العميل</button>` : ''}
       </div>`;
+    if (typing) $('#note-text').value = typing;
   }
   function waText(l, override) {
     if (override) return override;
@@ -1266,6 +1268,7 @@
         case 'add-note': {
           const txt = $('#note-text').value.trim();
           if (!txt) return;
+          $('#note-text').value = '';
           const l = byId(id);
           setMeta(id, { notes: [...l.notes, { t: Date.now(), text: txt }], lastContact: today() });
           log({ id, type: 'note' }); save(); refresh(); return;
