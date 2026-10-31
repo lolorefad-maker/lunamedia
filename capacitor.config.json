@@ -1,0 +1,12 @@
+{
+  "appId": "com.ramez.zarqaleads",
+  "appName": "لوحة العملاء",
+  "webDir": "public",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": false,
+    "backgroundColor": "#F1EEE6"
+  }
+}
