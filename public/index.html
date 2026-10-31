@@ -24,6 +24,10 @@
         <input class="input ltr" id="login-server" type="url" inputmode="url" placeholder="https://zarqa-leads.onrender.com" autocomplete="url">
       </div>
       <div class="field">
+        <label for="login-user">اسمك</label>
+        <input class="input" id="login-user" autocomplete="nickname" placeholder="بيظهر بالتقارير: مين اتصل ومين سكّر">
+      </div>
+      <div class="field">
         <label for="login-pass">كلمة السر</label>
         <input class="input" id="login-pass" type="password" autocomplete="current-password" required>
       </div>
@@ -39,11 +43,12 @@
         <span class="brand-name">لوحة العملاء</span>
       </div>
       <nav class="nav" id="nav">
-        <a href="#overview" data-view="overview"><span data-icon="grid"></span>لوحة التحكم</a>
-        <a href="#leads" data-view="leads"><span data-icon="users"></span>العملاء المحتملين</a>
-        <a href="#pipeline" data-view="pipeline"><span data-icon="columns"></span>المتابعة<b class="nav-badge" id="badge-due" hidden></b></a>
-        <a href="#inventory" data-view="inventory"><span data-icon="clipboard"></span>الجرد والأرقام</a>
-        <a href="#assistant" data-view="assistant"><span data-icon="sparkles"></span>المساعد الذكي</a>
+        <a href="#overview" data-view="overview" data-admin><span data-icon="grid"></span>لوحة التحكم</a>
+        <a href="#leads" data-view="leads" data-admin><span data-icon="users"></span>العملاء المحتملين</a>
+        <a href="#pipeline" data-view="pipeline" data-admin><span data-icon="columns"></span>المتابعة<b class="nav-badge" id="badge-due" hidden></b></a>
+        <a href="#inventory" data-view="inventory" data-admin><span data-icon="clipboard"></span>الجرد والأرقام</a>
+        <a href="#report" data-view="report"><span data-icon="chart"></span>تقرير الإدارة</a>
+        <a href="#assistant" data-view="assistant" data-admin><span data-icon="sparkles"></span>المساعد الذكي</a>
       </nav>
       <div class="side-card">
         <span class="side-card-icon" data-icon="shield"></span>
@@ -51,7 +56,7 @@
         <p id="sync-status">...</p>
         <button class="btn btn-soft" data-action="sync-now">زامن هسا</button>
       </div>
-      <a class="nav-settings" href="#settings" data-view="settings"><span data-icon="settings"></span>الإعدادات</a>
+      <a class="nav-settings" href="#settings" data-view="settings" data-admin><span data-icon="settings"></span>الإعدادات</a>
     </aside>
 
     <main class="main" id="main"></main>

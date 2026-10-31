@@ -1,5 +1,5 @@
 // كاش بسيط للواجهة عشان تفتح بسرعة وبدون نت. طلبات /api ما بتتخزن أبداً.
-const CACHE = 'zl-shell-v1';
+const CACHE = 'zl-shell-v2';
 const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'merge.js', 'config.js', 'manifest.webmanifest', 'icons/icon-192.png'];
 
 self.addEventListener('install', (e) => {
@@ -14,10 +14,20 @@ self.addEventListener('fetch', (e) => {
   const sameOrigin = url.origin === self.location.origin;
   const isFont = /fonts\.(googleapis|gstatic)\.com|cdnjs\.cloudflare\.com/.test(url.host);
   if (!sameOrigin && !isFont) return;
-  // stale-while-revalidate: افتح من الكاش وحدّث بالخلفية
+  if (sameOrigin) {
+    // network-first: دايماً آخر نسخة، والكاش بس لما ما في نت
+    e.respondWith(fetch(e.request).then((res) => {
+      if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(e.request, copy)); }
+      return res;
+    }).catch(() => caches.match(e.request, { ignoreSearch: true })));
+    return;
+  }
+  // الخطوط: من الكاش أول
   e.respondWith(caches.open(CACHE).then(async (cache) => {
-    const hit = await cache.match(e.request, { ignoreSearch: sameOrigin });
-    const net = fetch(e.request).then((res) => { if (res.ok || res.type === 'opaque') cache.put(e.request, res.clone()); return res; }).catch(() => hit);
-    return hit || net;
+    const hit = await cache.match(e.request);
+    if (hit) return hit;
+    const res = await fetch(e.request);
+    if (res.ok || res.type === 'opaque') cache.put(e.request, res.clone());
+    return res;
   }));
 });

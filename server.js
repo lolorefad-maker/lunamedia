@@ -11,6 +11,7 @@ loadDotEnv(path.join(__dirname, '.env'));
 
 const PORT = +process.env.PORT || 3000;
 const PASSWORD = process.env.APP_PASSWORD || '';
+const HR_PASSWORD = process.env.HR_PASSWORD || ''; // حساب عرض فقط (تقارير)
 const SECRET = process.env.SESSION_SECRET || 'zl-local-secret';
 const GEMINI_KEY = process.env.GEMINI_API_KEY || '';
 const MODELS = (process.env.GEMINI_MODELS || 'gemini-3.6-flash,gemini-3.8-flash,gemini-3.5-flash,gemini-3.1-flash-lite,gemini-flash-lite-latest')
@@ -59,13 +60,20 @@ let queue = Promise.resolve();
 const serialized = (fn) => { const p = queue.then(fn, fn); queue = p.catch(() => {}); return p; };
 
 // ---------- auth ----------
-const sessionToken = () => crypto.createHmac('sha256', SECRET).update('zl-v1:' + PASSWORD).digest('base64url');
+// admin = كل شي، viewer = قراءة التقارير بس
+const ROLE_PASSWORDS = () => ({ admin: PASSWORD, viewer: HR_PASSWORD });
+const sessionToken = (role) => role + '.' + crypto.createHmac('sha256', SECRET).update(`zl-v2:${role}:${ROLE_PASSWORDS()[role]}`).digest('base64url');
 const safeEqual = (a, b) => {
   const x = crypto.createHash('sha256').update(String(a)).digest();
   const y = crypto.createHash('sha256').update(String(b)).digest();
   return crypto.timingSafeEqual(x, y);
 };
-const isAuthed = (req) => !!PASSWORD && safeEqual((req.headers.authorization || '').replace(/^Bearer\s+/i, ''), sessionToken());
+function roleOf(req) {
+  const tok = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const role = tok.split('.')[0];
+  if ((role !== 'admin' && role !== 'viewer') || !ROLE_PASSWORDS()[role]) return null;
+  return safeEqual(tok, sessionToken(role)) ? role : null;
+}
 const attempts = new Map();
 function tooMany(ip) {
   const now = Date.now();
@@ -123,23 +131,27 @@ function readJson(req, limit) {
 
 async function api(req, res, url) {
   const route = `${req.method} ${url.pathname}`;
-  if (route === 'GET /api/status') return sendJson(res, 200, { ok: true, auth: !!PASSWORD, ai: !!GEMINI_KEY, storage: store.kind });
+  if (route === 'GET /api/status') return sendJson(res, 200, { ok: true, auth: !!PASSWORD, hr: !!HR_PASSWORD, ai: !!GEMINI_KEY, storage: store.kind });
   if (route === 'POST /api/login') {
     if (!PASSWORD) return sendJson(res, 503, { error: 'السيرفر ما إله كلمة سر — حط APP_PASSWORD' });
     const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
     if (tooMany(ip)) return sendJson(res, 429, { error: 'محاولات كثيرة، استنى دقيقة' });
     attempts.get(ip).push(Date.now());
     const body = await readJson(req, 10000);
-    if (!safeEqual(body.password || '', PASSWORD)) return sendJson(res, 401, { error: 'كلمة السر غلط' });
-    return sendJson(res, 200, { token: sessionToken() });
+    const pw = String(body.password || '');
+    const role = safeEqual(pw, PASSWORD) ? 'admin' : HR_PASSWORD && safeEqual(pw, HR_PASSWORD) ? 'viewer' : null;
+    if (!role) return sendJson(res, 401, { error: 'كلمة السر غلط' });
+    return sendJson(res, 200, { token: sessionToken(role), role });
   }
-  if (!isAuthed(req)) return sendJson(res, 401, { error: 'لازم تسجّل دخول' });
+  const role = roleOf(req);
+  if (!role) return sendJson(res, 401, { error: 'لازم تسجّل دخول' });
   if (route === 'GET /api/leads') {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
     return res.end(SEED);
   }
   if (route === 'GET /api/state') return sendJson(res, 200, { state: (await store.get()) || emptyState() });
   if (route === 'PUT /api/state') {
+    if (role !== 'admin') return sendJson(res, 403, { error: 'حساب الـ HR للعرض بس' });
     const body = await readJson(req, 8e6);
     const merged = await serialized(async () => {
       const m = mergeState((await store.get()) || emptyState(), body.state || {});
@@ -203,5 +215,5 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`لوحة العملاء شغالة على http://localhost:${PORT}  (storage: ${store.kind}, ai: ${GEMINI_KEY ? 'on' : 'off'}, password: ${PASSWORD ? 'set' : 'MISSING'})`);
+  console.log(`لوحة العملاء شغالة على http://localhost:${PORT}  (storage: ${store.kind}, ai: ${GEMINI_KEY ? 'on' : 'off'}, password: ${PASSWORD ? 'set' : 'MISSING'}, hr: ${HR_PASSWORD ? 'set' : 'off'})`);
 });

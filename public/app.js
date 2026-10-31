@@ -63,6 +63,8 @@
     dots: '<circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/>',
     flame: '<path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.07-2.14-.22-4.05 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.15.43-2.29 1-3a2.5 2.5 0 0 0 2.5 2.5z"/>',
     calendar: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
+    chart: '<path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/>',
+    logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>',
   };
   const icon = (n) => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${ICONS[n] || ''}</svg>`;
 
@@ -137,9 +139,10 @@
 
   // ---------- server / auth / sync ----------
   const normBase = (b) => { b = String(b || '').trim().replace(/\/+$/, ''); return b && !/^https?:\/\//i.test(b) ? 'https://' + b : b; };
-  let AUTH = { base: normBase(CFG.apiBase), token: '' };
+  let AUTH = { base: normBase(CFG.apiBase), token: '', role: 'admin', user: '' };
   try { AUTH = { ...AUTH, ...JSON.parse(localStorage.getItem(AUTH_KEY) || '{}') }; } catch (e) { /* ignore */ }
   const saveAuth = () => { try { localStorage.setItem(AUTH_KEY, JSON.stringify(AUTH)); } catch (e) { /* ignore */ } };
+  const isViewer = () => AUTH.role === 'viewer';
   let SERVER_STATUS = null;
 
   async function apiFetch(p, opts = {}) {
@@ -185,6 +188,7 @@
     return before !== JSON.stringify(syncPayload());
   }
   function scheduleSync(ms = 1200) {
+    if (isViewer()) return;
     SYNC.dirty = true;
     clearTimeout(SYNC.timer);
     if (AUTH.token) SYNC.timer = setTimeout(syncNow, ms);
@@ -194,7 +198,9 @@
     if (SYNC.busy) { SYNC.dirty = true; return; }
     SYNC.busy = true; SYNC.dirty = false; updateSyncUi();
     try {
-      const r = await apiFetch('/api/state', { method: 'PUT', body: JSON.stringify({ state: syncPayload() }) });
+      const r = isViewer()
+        ? await apiFetch('/api/state') // حساب الـ HR بيقرأ بس
+        : await apiFetch('/api/state', { method: 'PUT', body: JSON.stringify({ state: syncPayload() }) });
       const changed = applyRemote(r.state);
       SYNC.last = Date.now(); SYNC.err = '';
       if (changed) softRefresh();
@@ -248,7 +254,7 @@
   }
   const byId = (id) => leads().find((l) => l.id === id);
   const isCustom = (id) => state.custom.some((c) => c.id === id);
-  function log(entry) { state.activity.push({ t: Date.now(), ...entry }); if (state.activity.length > 3000) state.activity = state.activity.slice(-3000); }
+  function log(entry) { state.activity.push({ t: Date.now(), by: AUTH.user || '', ...entry }); if (state.activity.length > 3000) state.activity = state.activity.slice(-3000); }
   function setMeta(id, patch) { state.meta[id] = { ...(state.meta[id] || {}), ...patch, u: Date.now() }; invalidate(); save(); }
   function setStatus(id, status, { silent } = {}) {
     const l = byId(id);
@@ -373,8 +379,10 @@
       <div class="header-titles"><p class="eyebrow">${eyebrow}</p><h1 class="title">${title}</h1></div>
       ${opts.search === false ? '' : `<label class="search">${icon('search')}<input id="global-search" type="search" placeholder="دوّر على عميل، رقم، أو منطقة..." autocomplete="off"></label>`}
       <button class="icon-btn" data-action="theme" aria-label="تبديل الوضع" data-tip="الوضع: ${themeLbl}">${icon('moon')}</button>
-      <button class="icon-btn" data-action="due" aria-label="المتابعات" data-tip="${d ? `${d} متابعة مستحقة` : 'ما في متابعات مستحقة'}">${icon('bell')}${d ? '<span class="dot"></span>' : ''}</button>
-      ${opts.actions ?? `<button class="btn btn-primary btn-lg" data-action="add-lead">${icon('plus')}<span class="lbl">إضافة عميل</span></button>`}
+      <button class="icon-btn" data-admin data-action="due" aria-label="المتابعات" data-tip="${d ? `${d} متابعة مستحقة` : 'ما في متابعات مستحقة'}">${icon('bell')}${d ? '<span class="dot"></span>' : ''}</button>
+      ${isViewer()
+        ? `<span class="viewer-badge">${icon('shield')} حساب HR · عرض فقط</span><button class="btn btn-ghost" data-action="logout">${icon('logout')} خروج</button>`
+        : opts.actions ?? `<button class="btn btn-primary btn-lg" data-action="add-lead">${icon('plus')}<span class="lbl">إضافة عميل</span></button>`}
     </header>`;
   }
   function bars(items) {
@@ -581,7 +589,7 @@
     const end = a.type === 'status' && ST[a.to] ? pill(a.to) : `<span class="hint">${relTime(a.t)}</span>`;
     return `<div class="list-item ${l ? 'clickable' : ''}" ${l ? `data-open="${l.id}"` : ''}>
       ${avatar(name)}
-      <div class="li-body"><div class="li-title">${esc(name)}</div><div class="li-sub">${desc}${a.type === 'status' ? ' · ' + relTime(a.t) : ''}</div></div>
+      <div class="li-body"><div class="li-title">${esc(name)}</div><div class="li-sub">${desc}${a.type === 'status' ? ' · ' + relTime(a.t) : ''}${a.by ? ' · ' + esc(a.by) : ''}</div></div>
       <div class="li-end">${end}</div></div>`;
   }
 
@@ -914,6 +922,169 @@
     const b2 = $('#chat-send'); if (b2) b2.disabled = false;
   }
 
+  // ----- report (للإدارة / HR) -----
+  const R = { period: 'month', by: '', logAll: false };
+  const PERIODS = [['today', 'اليوم'], ['week', 'آخر 7 أيام'], ['month', 'هالشهر'], ['all', 'كل الوقت']];
+  const ACT_LABEL = { call: 'اتصال', wa: 'واتساب', note: 'ملاحظة', status: 'تغيير حالة' };
+  const CONTACT_TYPES = new Set(['call', 'wa', 'note', 'status']);
+  function periodStart(p) {
+    const d = new Date(); d.setHours(0, 0, 0, 0);
+    if (p === 'today') return d.getTime();
+    if (p === 'week') { d.setDate(d.getDate() - 6); return d.getTime(); }
+    if (p === 'month') { d.setDate(1); return d.getTime(); }
+    return 0;
+  }
+  const byTag = (name) => name ? `<span class="by"><i style="background:${avColor(name)}">${esc(initials(name))}</i>${esc(name)}</span>` : '<span class="hint">—</span>';
+  const fmtTime = (t) => { const d = new Date(t); return `${arDate(iso(d))} · ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+  const actDesc = (a) => a.type === 'status' ? `${ST[a.from]?.label || ''} ← ${ST[a.to]?.label || ''}` : ACT_LABEL[a.type] || a.type;
+
+  function reportData() {
+    const L = leads();
+    const idx = new Map(L.map((l) => [l.id, l]));
+    const t0 = periodStart(R.period);
+    const isTouch = (a) => a.type !== 'status' || a.to !== 'new';
+    const inPeriod = state.activity.filter((a) => a.t >= t0 && a.id && idx.has(a.id) && CONTACT_TYPES.has(a.type));
+    const acts = inPeriod.filter((a) => !R.by || (a.by || '') === R.by);
+    const touched = new Set(acts.filter(isTouch).map((a) => a.id));
+    // آخر مرة انحطت الحالة "تم الإغلاق" لكل عميل
+    const wonAct = new Map();
+    for (const a of state.activity) if (a.type === 'status' && a.to === 'won') wonAct.set(a.id, a);
+    const wonLeads = L.filter((l) => l.status === 'won');
+    const won = wonLeads.map((l) => {
+      const a = wonAct.get(l.id);
+      return { l, t: a ? a.t : (l.wonAt ? new Date(l.wonAt + 'T12:00').getTime() : 0), by: a ? a.by || '' : '' };
+    }).filter((w) => w.t >= t0 && (!R.by || w.by === R.by)).sort((x, y) => y.t - x.t);
+    // أداء كل شخص بالفترة
+    const people = new Map();
+    const P = (name) => {
+      if (!people.has(name)) people.set(name, { name, call: 0, wa: 0, note: 0, status: 0, touched: new Set(), won: 0, revenue: 0 });
+      return people.get(name);
+    };
+    for (const a of inPeriod) { const p = P(a.by || ''); p[a.type]++; if (isTouch(a)) p.touched.add(a.id); }
+    for (const l of wonLeads) {
+      const a = wonAct.get(l.id);
+      if (a && a.t >= t0) { const p = P(a.by || ''); p.won++; p.revenue += l.deal; }
+    }
+    const allTouched = new Set(state.activity.filter((a) => a.id && CONTACT_TYPES.has(a.type) && isTouch(a)).map((a) => a.id));
+    const t = today();
+    const toCall = L.filter((l) => !CLOSED.has(l.status) && ((l.followUp && l.followUp <= t) || l.status === 'noanswer'))
+      .sort((a, b) => ((a.followUp || '9') < (b.followUp || '9') ? -1 : 1));
+    const open = L.filter((l) => l.status === 'interested' || l.status === 'proposal').sort((a, b) => b.deal - a.deal);
+    return {
+      L, idx, acts, touched, won, toCall, open,
+      people: [...people.values()].sort((a, b) => b.won - a.won || b.touched.size - a.touched.size),
+      calls: acts.filter((a) => a.type === 'call').length,
+      was: acts.filter((a) => a.type === 'wa').length,
+      revenue: won.reduce((s, w) => s + w.l.deal, 0),
+      allTouched: allTouched.size, allWon: wonLeads.length,
+      conversion: allTouched.size ? Math.round((wonLeads.length / allTouched.size) * 100) : 0,
+      names: [...new Set(state.activity.map((a) => a.by || '').filter(Boolean))].sort(),
+    };
+  }
+
+  VIEWS.report = () => {
+    const D = reportData();
+    const periodLbl = PERIODS.find((p) => p[0] === R.period)[1];
+    const log = D.acts.slice().sort((a, b) => b.t - a.t);
+    const shownLog = R.logAll ? log : log.slice(0, 40);
+    mounts.push(mountArea);
+    const row = (l, cells) => `<tr data-open="${l.id}">${cells.map((c) => `<td>${c}</td>`).join('')}</tr>`;
+    const nameCell = (l) => `<div class="cell-name" style="min-width:180px">${avatar(l.name)}<div><b>${esc(l.name)}</b><small>${esc(l.type || l.sector)} · ${esc(l.city)}</small></div></div>`;
+    const empty = (cols, msg) => `<tr><td colspan="${cols}"><div class="empty">${msg}</div></td></tr>`;
+    const team = D.people.map((p) => `<tr>
+        <td>${p.name ? byTag(p.name) : '<span class="hint">بدون اسم</span>'}</td>
+        <td class="strong num">${p.touched.size}</td><td class="num">${p.call}</td><td class="num">${p.wa}</td>
+        <td class="num">${p.note}</td><td class="num">${p.status}</td>
+        <td class="strong num">${p.won}</td><td class="strong num">${fmt(p.revenue)} د.أ</td></tr>`).join('');
+    return `
+    ${header(`تقرير ${periodLbl}`, 'تقرير الإدارة', { search: false, actions: `<button class="btn btn-ghost" data-action="report-export">${icon('download')} تصدير التقرير</button>` })}
+    <section class="card"><div class="report-filters">
+      <div class="seg">${PERIODS.map(([k, t]) => `<button class="${R.period === k ? 'on' : ''}" data-action="report-period" data-p="${k}">${t}</button>`).join('')}</div>
+      <select class="select" data-rfilter="by" aria-label="الموظف"><option value="">كل الفريق</option>${D.names.map((n) => `<option ${R.by === n ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
+      ${isViewer() ? `<button class="btn btn-ghost btn-sm" data-action="report-export">${icon('download')} تصدير Excel</button>` : ''}
+      <span class="count-note">${R.by ? `تقرير ${esc(R.by)}` : 'كل الفريق'} · ${periodLbl}</span>
+    </div></section>
+    <div class="grid">
+      ${kpi('تواصلنا معهم', fmt(D.touched.size), 'users', `<span class="chip">${fmt(D.acts.length)} عملية</span>`)}
+      ${kpi('اتصالات', fmt(D.calls), 'phone', `<span class="chip slate">${fmt(D.was)} واتساب</span>`)}
+      ${kpi('صفقات مغلقة', fmt(D.won.length), 'check', `<span class="chip gold">${fmt(D.revenue)} د.أ</span>`)}
+      ${kpi('نسبة التحويل', D.conversion + '%', 'up', `<span class="chip neutral">${fmt(D.allWon)} من ${fmt(D.allTouched)} · كل الوقت</span>`)}
+
+      <section class="card span-12">
+        <div class="card-head"><div><h3>أداء الفريق</h3><p class="sub">${periodLbl} — مين اتصل، مين راسل، ومين سكّر صفقات</p></div></div>
+        <div class="rt-wrap"><table class="rt wide">
+          <thead><tr><th>الموظف</th><th>تواصل مع</th><th>اتصالات</th><th>واتساب</th><th>ملاحظات</th><th>تغيير حالات</th><th>صفقات</th><th>الإيرادات</th></tr></thead>
+          <tbody>${team || empty(8, 'ما في نشاط بهالفترة')}</tbody>
+        </table></div>
+      </section>
+
+      <section class="card span-6 r-span-12">
+        <div class="card-head"><div><h3>صفقات مغلقة</h3><p class="sub">${fmt(D.won.length)} صفقة · ${fmt(D.revenue)} د.أ</p></div></div>
+        <div class="rt-wrap"><table class="rt">
+          <thead><tr><th>العميل</th><th>القيمة</th><th>التاريخ</th><th>سكّرها</th></tr></thead>
+          <tbody>${D.won.map((w) => row(w.l, [nameCell(w.l), w.l.deal ? `<b class="num">${fmt(w.l.deal)} د.أ</b>` : '<span class="hint">بدون قيمة</span>', w.t ? arDate(iso(new Date(w.t))) : '—', byTag(w.by)])).join('') || empty(4, 'ما في صفقات مغلقة بهالفترة')}</tbody>
+        </table></div>
+      </section>
+
+      <section class="card span-6 r-span-12">
+        <div class="card-head"><div><h3>لازم نتصل فيهم</h3><p class="sub">متابعات مستحقة + اللي ما ردوا (${fmt(D.toCall.length)})</p></div></div>
+        <div class="rt-wrap"><table class="rt">
+          <thead><tr><th>العميل</th><th>الهاتف</th><th>السبب</th><th>آخر تواصل</th></tr></thead>
+          <tbody>${D.toCall.slice(0, 60).map((l) => row(l, [nameCell(l), phoneCell(l), l.followUp && l.followUp <= today() ? `<span class="pill s-proposal">متابعة ${arDate(l.followUp)}</span>` : pill('noanswer'), arDate(l.lastContact)])).join('') || empty(4, 'ما في حدا مستني اتصال 👏')}</tbody>
+        </table></div>
+      </section>
+
+      <section class="card span-12">
+        <div class="card-head"><div><h3>سجل التواصل</h3><p class="sub">${fmt(log.length)} عملية · ${periodLbl}</p></div></div>
+        <div class="rt-wrap"><table class="rt wide">
+          <thead><tr><th>الوقت</th><th>العميل</th><th>شو صار</th><th>مين</th><th>الحالة هلأ</th></tr></thead>
+          <tbody>${shownLog.map((a) => { const l = D.idx.get(a.id); return row(l, [`<span class="num">${fmtTime(a.t)}</span>`, nameCell(l), actDesc(a), byTag(a.by), pill(l.status)]); }).join('') || empty(5, 'ما في تواصل بهالفترة')}</tbody>
+        </table></div>
+        ${log.length > shownLog.length ? `<div class="pager"><button class="btn btn-ghost btn-sm" data-action="report-more">اعرض الكل (${fmt(log.length)})</button></div>` : ''}
+      </section>
+
+      <section class="card span-8 r-span-12">
+        <div class="card-head"><div><h3>بالمتابعة</h3><p class="sub">مهتمين وعروض سعر مفتوحة (${fmt(D.open.length)})</p></div></div>
+        <div class="rt-wrap"><table class="rt wide">
+          <thead><tr><th>العميل</th><th>الحالة</th><th>القيمة المتوقعة</th><th>موعد المتابعة</th><th>آخر تواصل</th></tr></thead>
+          <tbody>${D.open.map((l) => row(l, [nameCell(l), pill(l.status), l.deal ? `<b class="num">${fmt(l.deal)} د.أ</b>` : '—', arDate(l.followUp), arDate(l.lastContact)])).join('') || empty(5, 'ما في عروض مفتوحة')}</tbody>
+        </table></div>
+      </section>
+
+      <section class="card span-4 r-span-12"><div class="card-head"><div><h3>مسار المبيعات</h3><p class="sub">كل العملاء حسب الحالة</p></div></div>
+        ${bars(STATUSES.map((st) => ({ label: st.label, v: D.L.filter((l) => l.status === st.id).length })))}
+      </section>
+
+      <section class="card span-12">
+        <div class="card-head"><div><h3>النشاط اليومي</h3><p class="sub">كل الفريق</p></div><span class="spacer"></span>
+          <div class="seg">${[7, 30, 90].map((d) => `<button class="${areaDays === d ? 'on' : ''}" data-action="area-days" data-days="${d}">${d} يوم</button>`).join('')}</div></div>
+        ${areaChart()}
+      </section>
+    </div>`;
+  };
+
+  function exportReport() {
+    const D = reportData();
+    if (!window.XLSX) { toast('مكتبة Excel ما حمّلت — تأكد من الإنترنت'); return; }
+    const wb = XLSX.utils.book_new();
+    const add = (name, rows, widths) => {
+      const ws = XLSX.utils.json_to_sheet(rows.length ? rows : [{ '-': 'ما في بيانات' }]);
+      ws['!cols'] = widths.map((w) => ({ wch: w }));
+      XLSX.utils.book_append_sheet(wb, ws, name);
+    };
+    add('الفريق', D.people.map((p) => ({ 'الموظف': p.name || 'بدون اسم', 'تواصل مع': p.touched.size, 'اتصالات': p.call, 'واتساب': p.wa, 'ملاحظات': p.note, 'تغيير حالات': p.status, 'صفقات': p.won, 'الإيرادات (د.أ)': p.revenue })), [16, 10, 10, 10, 10, 12, 8, 14]);
+    add('الصفقات', D.won.map((w) => ({ 'العميل': w.l.name, 'القطاع': w.l.sector, 'المدينة': w.l.city, 'الهاتف': w.l.phone || '', 'القيمة (د.أ)': w.l.deal, 'التاريخ': w.t ? iso(new Date(w.t)) : '', 'سكّرها': w.by })), [34, 14, 10, 13, 12, 12, 14]);
+    add('سجل التواصل', D.acts.slice().sort((a, b) => b.t - a.t).map((a) => {
+      const l = D.idx.get(a.id);
+      return { 'الوقت': new Date(a.t).toLocaleString('en-GB'), 'العميل': l.name, 'الهاتف': l.phone || '', 'شو صار': actDesc(a), 'مين': a.by || '', 'الحالة هلأ': ST[l.status].label };
+    }), [20, 34, 13, 20, 14, 12]);
+    add('لازم نتصل', D.toCall.map((l) => ({ 'العميل': l.name, 'الهاتف': l.phone || '', 'السبب': l.status === 'noanswer' ? 'ما رد' : 'متابعة ' + l.followUp, 'آخر تواصل': l.lastContact })), [34, 13, 18, 12]);
+    add('بالمتابعة', D.open.map((l) => ({ 'العميل': l.name, 'الحالة': ST[l.status].label, 'القيمة المتوقعة': l.deal, 'موعد المتابعة': l.followUp, 'آخر تواصل': l.lastContact })), [34, 12, 14, 13, 12]);
+    wb.Workbook = { Views: [{ RTL: true }] };
+    XLSX.writeFile(wb, `report-${R.period}-${today()}.xlsx`);
+    toast('انصدّر التقرير ✓');
+  }
+
   // ----- settings -----
   VIEWS.settings = () => {
     const st = state.settings;
@@ -926,7 +1097,8 @@
       <section class="card stack">
         <div class="card-head"><h3>حسابك</h3></div>
         <div class="form-grid">
-          <div class="field"><label>اسمك</label><input class="input" data-setting="name" value="${esc(st.name)}" placeholder="مثلاً: عمر"></div>
+          <div class="field"><label>اسمك على هالجهاز (للتقارير)</label><input class="input" data-auth-user value="${esc(AUTH.user)}" placeholder="مثلاً: عمر"></div>
+          <div class="field"><label>اسم صاحب اللوحة</label><input class="input" data-setting="name" value="${esc(st.name)}" placeholder="بيظهر بالترحيب والرسائل"></div>
           <div class="field"><label>اسم الوكالة / البراند</label><input class="input" data-setting="agency" value="${esc(st.agency)}"></div>
           <div class="field"><label>هدف الشهر (د.أ)</label><input class="input num" type="number" min="0" data-setting="revenueTarget" value="${esc(st.revenueTarget)}"></div>
           <div class="field"><label>الوضع</label><select class="select" data-setting="theme">${[['auto', 'تلقائي'], ['light', 'فاتح'], ['dark', 'داكن']].map(([v, t]) => `<option value="${v}" ${st.theme === v ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
@@ -989,6 +1161,7 @@
     if (!l) { closeDrawer(); return; }
     const info = (k, v, wide) => `<div class="info ${wide ? 'wide' : ''}"><span>${k}</span><b>${v}</b></div>`;
     const draft = aiDrafts[l.id];
+    const ro = isViewer();
     const typing = $('#note-text') ? $('#note-text').value : ''; // ما نمسح ملاحظة نص كتابة لما توصل مزامنة
     $('#drawer').innerHTML = `
       <div class="drawer-head">
@@ -997,13 +1170,13 @@
         <button class="icon-btn" data-action="close-drawer" aria-label="إغلاق">${icon('x')}</button>
       </div>
       <div class="drawer-body">
-        <div class="quick">
+        <div class="quick" ${ro ? 'hidden' : ''}>
           <button class="btn btn-primary" data-action="wa" data-id="${l.id}" ${l.mobile ? '' : 'disabled'}>${icon('wa')} واتساب</button>
           ${l.phone ? `<a class="btn btn-ghost" href="tel:${l.phone}" data-action="call" data-id="${l.id}">${icon('phone')} اتصال</a>
           <button class="btn btn-ghost" data-action="copy" data-text="${esc(l.phone)}">${icon('copy')} نسخ الرقم</button>` : ''}
           ${l.maps ? `<a class="btn btn-ghost" href="${esc(l.maps)}" target="_blank" rel="noopener">${icon('map')} الخريطة</a>` : ''}
         </div>
-        <div class="drawer-section"><h4>الحالة</h4><div class="status-grid">${STATUSES.map((s) => `<button class="${l.status === s.id ? 'on' : ''}" data-action="set-status" data-id="${l.id}" data-status="${s.id}">${s.label}</button>`).join('')}</div></div>
+        <div class="drawer-section"><h4>الحالة</h4>${ro ? pill(l.status) : `<div class="status-grid">${STATUSES.map((s) => `<button class="${l.status === s.id ? 'on' : ''}" data-action="set-status" data-id="${l.id}" data-status="${s.id}">${s.label}</button>`).join('')}</div>`}</div>
         <div class="info-grid">
           ${info('الهاتف', phoneCell(l))}
           ${info('التقييم', stars(l))}
@@ -1014,11 +1187,12 @@
           ${info('العنوان', esc(l.address || '—'), true)}
           ${info('الخدمة المقترحة', esc(l.service || '—'), true)}
         </div>
-        <div class="form-grid">
+        ${ro ? `<div class="info-grid">${info('موعد المتابعة', arDate(l.followUp))}${info('قيمة الصفقة', l.deal ? fmt(l.deal) + ' د.أ' : '—')}</div>` : ''}
+        <div class="form-grid" ${ro ? 'hidden' : ''}>
           <div class="field"><label>موعد المتابعة</label><input class="input" type="date" data-meta="followUp" data-id="${l.id}" value="${esc(l.followUp)}"></div>
           <div class="field"><label>قيمة الصفقة (د.أ)</label><input class="input num" type="number" min="0" step="10" data-meta="deal" data-id="${l.id}" value="${l.deal || ''}" placeholder="0"></div>
         </div>
-        <div class="drawer-section">
+        <div class="drawer-section" ${ro ? 'hidden' : ''}>
           <h4>المساعد الذكي</h4>
           <div class="quick">
             <button class="btn btn-soft" data-action="ai-draft" data-id="${l.id}">${icon('sparkles')} اكتبلي رسالة أولى</button>
@@ -1029,11 +1203,11 @@
         </div>
         <div class="drawer-section">
           <h4>الملاحظات</h4>
-          <textarea class="textarea" id="note-text" placeholder="شو صار بالمكالمة؟ شو طلب؟"></textarea>
-          <div class="quick" style="margin-top:8px"><button class="btn btn-sm btn-primary" data-action="add-note" data-id="${l.id}">إضافة ملاحظة</button></div>
-          <div class="notes">${l.notes.slice().reverse().map((n) => `<div class="note">${esc(n.text)}<small>${relTime(n.t)}</small></div>`).join('')}</div>
+          ${ro ? '' : `<textarea class="textarea" id="note-text" placeholder="شو صار بالمكالمة؟ شو طلب؟"></textarea>`}
+          <div class="quick" style="margin-top:8px" ${ro ? 'hidden' : ''}><button class="btn btn-sm btn-primary" data-action="add-note" data-id="${l.id}">إضافة ملاحظة</button></div>
+          <div class="notes">${l.notes.slice().reverse().map((n) => `<div class="note">${esc(n.text)}<small>${relTime(n.t)}${n.by ? ' · ' + esc(n.by) : ''}</small></div>`).join('') || (isViewer() ? '<div class="hint">ما في ملاحظات</div>' : '')}</div>
         </div>
-        ${isCustom(l.id) ? `<button class="btn btn-danger btn-sm" data-action="delete-lead" data-id="${l.id}" style="align-self:flex-start">${icon('trash')} حذف العميل</button>` : ''}
+        ${isCustom(l.id) && !ro ? `<button class="btn btn-danger btn-sm" data-action="delete-lead" data-id="${l.id}" style="align-self:flex-start">${icon('trash')} حذف العميل</button>` : ''}
       </div>`;
     if (typing) $('#note-text').value = typing;
   }
@@ -1244,6 +1418,7 @@
     if (!AUTH.token) return;
     const v = (location.hash || '#overview').slice(1).split('?')[0];
     view = VIEWS[v] ? v : 'overview';
+    if (isViewer()) view = 'report'; // حساب الـ HR بيشوف التقرير بس
     render();
     window.scrollTo(0, 0);
   }
@@ -1254,11 +1429,13 @@
   }
 
   // ---------- events ----------
+  const VIEWER_ACTIONS = new Set(['close-drawer', 'copy', 'theme', 'logout', 'sync-now', 'close-modal', 'area-days', 'report-period', 'report-export', 'report-more']);
   document.addEventListener('click', (e) => {
     const t = e.target;
     const actEl = t.closest('[data-action]');
     if (actEl && !actEl.disabled && actEl.getAttribute('aria-disabled') !== 'true') {
       const a = actEl.dataset.action, id = actEl.dataset.id;
+      if (isViewer() && !VIEWER_ACTIONS.has(a)) { e.preventDefault(); return; }
       switch (a) {
         case 'wa': e.preventDefault(); e.stopPropagation(); openWa(id); return;
         case 'call': e.stopPropagation(); contactAttempt(id, 'call'); return; // href=tel: يكمل طبيعي
@@ -1270,7 +1447,7 @@
           if (!txt) return;
           $('#note-text').value = '';
           const l = byId(id);
-          setMeta(id, { notes: [...l.notes, { t: Date.now(), text: txt }], lastContact: today() });
+          setMeta(id, { notes: [...l.notes, { t: Date.now(), text: txt, by: AUTH.user || '' }], lastContact: today() });
           log({ id, type: 'note' }); save(); refresh(); return;
         }
         case 'delete-lead':
@@ -1294,6 +1471,9 @@
         }
         case 'due': goLeads([['due', 'true']]); return;
         case 'area-days': areaDays = +actEl.dataset.days; render(); return;
+        case 'report-period': R.period = actEl.dataset.p; R.logAll = false; render(); return;
+        case 'report-more': R.logAll = true; render(); return;
+        case 'report-export': if (IS_NATIVE) { download(); return; } exportReport(); return;
         case 'clear-filters': goLeads([]); return;
         case 'more': P.limits[actEl.dataset.col] = (P.limits[actEl.dataset.col] || 30) + 60; render(); return;
         case 'export-excel': exportExcel(); return;
@@ -1340,6 +1520,8 @@
 
   document.addEventListener('change', (e) => {
     const t = e.target;
+    if (t.dataset.rfilter) { R[t.dataset.rfilter] = t.value; render(); return; }
+    if (isViewer()) return;
     if (t.dataset.statusFor) { setStatus(t.dataset.statusFor, t.value); refresh(); return; }
     if (t.dataset.filter) { F[t.dataset.filter] = t.type === 'checkbox' ? t.checked : t.value; F.page = 1; renderLeadsTable(); return; }
     if (t.dataset.pfilter) { P[t.dataset.pfilter] = t.value; render(); return; }
@@ -1360,6 +1542,7 @@
       toast('انحفظ ✓');
       return;
     }
+    if (t.hasAttribute('data-auth-user')) { AUTH.user = t.value.trim(); saveAuth(); toast('انحفظ ✓ — العمليات الجاية بتنسجل باسمك'); return; }
     if (t.id === 'chat-lead') { state.chatLead = t.value; save(); return; }
     if (t.id === 'chat-data') { state.settings.aiData = t.checked; save(); return; }
   });
@@ -1405,12 +1588,14 @@
     const showServer = IS_NATIVE || !!AUTH.base;
     $('#server-field').hidden = !showServer;
     $('#login-server').value = AUTH.base || normBase(CFG.apiBase) || '';
+    $('#login-user').value = AUTH.user || state.settings.name || '';
     $('#login-msg').textContent = msg || '';
     setTimeout(() => $('#login-pass').focus(), 50);
   }
   function showApp() {
     $('#login').hidden = true;
     $('.app').hidden = false;
+    document.body.classList.toggle('role-viewer', isViewer());
   }
   function logout(msg) {
     AUTH.token = ''; saveAuth();
@@ -1429,7 +1614,8 @@
       const res = await fetch(base + '/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }), signal: AbortSignal.timeout(90000) });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
-      AUTH = { base, token: j.token }; saveAuth();
+      const user = $('#login-user').value.trim() || (j.role === 'viewer' ? 'HR' : state.settings.name || '');
+      AUTH = { base, token: j.token, role: j.role || 'admin', user }; saveAuth();
       $('#login-pass').value = '';
       msg.textContent = 'عم بنزّل العملاء...';
       await loadLeads();

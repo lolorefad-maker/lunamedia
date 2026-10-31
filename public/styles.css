@@ -613,3 +613,21 @@ table.mx td:not(.zero):hover { outline: 2px solid var(--sage); }
   .table-wrap { overflow: visible; }
   .toolbar .select { flex: 1 1 140px; }
 }
+
+/* ===== HR / viewer ===== */
+.role-viewer [data-admin] { display: none !important; }
+.viewer-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 99px; background: var(--slate-50); color: var(--slate); font-size: 12.5px; font-weight: 600; }
+.rt-wrap { overflow-x: auto; border-radius: var(--r-md); }
+table.rt { width: 100%; border-collapse: collapse; }
+table.rt.wide { min-width: 640px; }
+table.rt .cell-name { min-width: 0 !important; }
+table.rt th { text-align: start; font-size: 12px; font-weight: 600; color: var(--muted); padding: 9px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+table.rt td { padding: 10px; border-bottom: 1px solid var(--line); vertical-align: middle; font-size: 13.5px; }
+table.rt tbody tr[data-open] { cursor: pointer; }
+table.rt tbody tr[data-open]:hover { background: var(--card-2); }
+table.rt td.strong { font-weight: 600; }
+table.rt tfoot td { font-weight: 700; background: var(--card-2); }
+.by { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; }
+.by i { width: 22px; height: 22px; border-radius: 7px; display: grid; place-items: center; color: #fff; font-style: normal; font-size: 11px; font-weight: 700; }
+.report-filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.report-filters .select { width: auto; min-width: 150px; border-radius: 99px; }
