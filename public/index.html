@@ -60,6 +60,23 @@
     </aside>
 
     <main class="main" id="main"></main>
+
+    <!-- موبايل: شريط تنقل تحت -->
+    <nav class="tabbar" aria-label="التنقل">
+      <a href="#overview" data-view="overview"><span data-icon="grid"></span><b>الرئيسية</b></a>
+      <a href="#leads" data-view="leads"><span data-icon="users"></span><b>العملاء</b></a>
+      <a href="#pipeline" data-view="pipeline"><span data-icon="columns"></span><b>المتابعة</b><i class="tab-badge" id="badge-due-2" hidden></i></a>
+      <a href="#assistant" data-view="assistant"><span data-icon="sparkles"></span><b>المساعد</b></a>
+      <button type="button" data-action="more" class="tab-more"><span data-icon="dots"></span><b>المزيد</b></button>
+    </nav>
+    <div class="more-backdrop" id="more-backdrop" hidden></div>
+    <div class="more-sheet" id="more-sheet" hidden>
+      <span class="sheet-grip"></span>
+      <a href="#inventory" data-view="inventory"><span data-icon="clipboard"></span>الجرد والأرقام</a>
+      <a href="#report" data-view="report"><span data-icon="chart"></span>تقرير الإدارة</a>
+      <a href="#settings" data-view="settings"><span data-icon="settings"></span>الإعدادات</a>
+      <div class="sheet-sync"><span data-icon="shield"></span><span id="sync-status-3">...</span><button class="btn btn-soft btn-sm" data-action="sync-now">زامن هسا</button></div>
+    </div>
   </div>
 
   <div class="drawer-backdrop" id="drawer-backdrop" hidden></div>

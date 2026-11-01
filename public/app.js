@@ -226,7 +226,7 @@
     return isViewer() ? `محدّث من السيرفر · ${relTime(SYNC.last)}` : `متزامن · ${relTime(SYNC.last)}`;
   }
   function updateSyncUi() {
-    for (const id of ['sync-status', 'sync-status-2']) { const el = document.getElementById(id); if (el) { el.textContent = syncText(); el.title = SYNC.err || ''; el.dataset.err = SYNC.err || ''; } }
+    for (const id of ['sync-status', 'sync-status-2', 'sync-status-3']) { const el = document.getElementById(id); if (el) { el.textContent = syncText(); el.title = SYNC.err || ''; el.dataset.err = SYNC.err || ''; } }
     const card = document.querySelector('.side-card');
     if (card) card.classList.toggle('offline', !!SYNC.err);
   }
@@ -439,16 +439,17 @@
     return out;
   }
   let areaDays = 30;
+  const chartDims = () => (window.innerWidth < 600 ? { W: 420, H: 230 } : { W: 860, H: 250 });
   function areaChart() {
     const S = activitySeries(areaDays);
-    const W = 860, H = 250, pl = 30, pr = 12, pt = 16, pb = 30;
+    const { W, H } = chartDims(), pl = 30, pr = 12, pt = 16, pb = 30;
     const max = niceMax(Math.max(...S.map((d) => d.v)));
     const n = S.length;
     const X = (i) => pl + (W - pl - pr) * (i / (n - 1));
     const Y = (v) => pt + (H - pt - pb) * (1 - v / max);
     const pts = S.map((d, i) => [X(i), Y(d.v)]);
     const line = monotonePath(pts);
-    const step = Math.max(1, Math.ceil(n / 8));
+    const step = Math.max(1, Math.ceil(n / (W < 600 ? 5 : 8)));
     const xl = S.map((d, i) => ((n - 1 - i) % step === 0 ? `<text class="axis-text ${i === n - 1 ? 'strong' : ''}" x="${X(i)}" y="${H - 8}" text-anchor="middle">${i === n - 1 ? 'اليوم' : d.label}</text>` : '')).join('');
     const grid = [0, max / 2, max].map((v) => `<line class="grid-line" x1="${pl}" x2="${W - pr}" y1="${Y(v)}" y2="${Y(v)}"/><text class="axis-text" x="${pl - 8}" y="${Y(v) + 4}" text-anchor="end">${fmt(v)}</text>`).join('');
     const empty = S.every((d) => !d.v);
@@ -472,7 +473,7 @@
     if (!wrap) return;
     const S = activitySeries(areaDays);
     const svg = wrap.querySelector('svg');
-    const W = 860, H = 250, pl = 30, pr = 12, pt = 16, pb = 30, n = S.length;
+    const { W, H } = chartDims(), pl = 30, pr = 12, pt = 16, pb = 30, n = S.length;
     const max = niceMax(Math.max(...S.map((d) => d.v)));
     const X = (i) => pl + (W - pl - pr) * (i / (n - 1));
     const Y = (v) => pt + (H - pt - pb) * (1 - v / max);
@@ -605,6 +606,7 @@
   // ----- leads view -----
   const F = { q: '', sector: '', city: '', status: '', heat: '', source: '', wa: false, due: false, sort: 'score', dir: -1, page: 1 };
   const PAGE = 60;
+  const activeFilters = () => ['sector', 'city', 'status', 'heat', 'source', 'wa', 'due'].filter((k) => F[k]).length;
   function filtered() {
     const q = norm(F.q.trim()), qd = F.q.replace(/\D/g, '');
     const t = today();
@@ -629,13 +631,14 @@
     return `
     ${header('قاعدة البيانات', 'العملاء المحتملين', {
       search: false,
-      actions: `<button class="btn btn-ghost" data-action="import-excel">${icon('upload')} استيراد Excel</button>
-        <button class="btn btn-ghost" data-action="export-excel">${icon('download')} تصدير</button>
+      actions: `<button class="btn btn-ghost" data-action="import-excel" aria-label="استيراد Excel">${icon('upload')}<span class="lbl">استيراد Excel</span></button>
+        <button class="btn btn-ghost" data-action="export-excel" aria-label="تصدير">${icon('download')}<span class="lbl">تصدير</span></button>
         <button class="btn btn-primary btn-lg" data-action="add-lead">${icon('plus')}<span class="lbl">إضافة عميل</span></button>`,
     })}
     <section class="card">
-      <div class="toolbar" style="margin-bottom:14px">
+      <div class="toolbar filters" id="leads-toolbar" style="margin-bottom:14px">
         <label class="search">${icon('search')}<input id="leads-search" type="search" placeholder="اسم، رقم، شارع، خدمة..." value="${esc(F.q)}" autocomplete="off"></label>
+        <button class="btn btn-ghost filter-toggle" data-action="toggle-filters">${icon('columns')} فلترة${activeFilters() ? ` <b class="nav-badge">${activeFilters()}</b>` : ''}</button>
         ${sel('sector', 'كل القطاعات', secs.map((s) => [s, s]))}
         ${sel('city', 'كل المدن', CITIES.map((c) => [c, c]))}
         ${sel('status', 'كل الحالات', STATUSES.map((s) => [s.id, s.label]))}
@@ -755,7 +758,7 @@
     mounts.push(renderPhones);
     const sel = (key, label, opts) => `<select class="select" data-ifilter="${key}" style="width:auto;border-radius:99px"><option value="">${label}</option>${opts.map(([v, t]) => `<option value="${esc(v)}" ${I[key] === v ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select>`;
     return `
-    ${header('كل الأرقام بمكان واحد', 'الجرد', { search: false, actions: `<button class="btn btn-primary btn-lg" data-action="export-excel">${icon('download')} تصدير Excel كامل</button>` })}
+    ${header('كل الأرقام بمكان واحد', 'الجرد', { search: false, actions: `<button class="btn btn-primary btn-lg" data-action="export-excel" aria-label="تصدير Excel">${icon('download')}<span class="lbl">تصدير Excel كامل</span></button>` })}
     <section class="card"><div class="mini-stats">
       ${mini('إجمالي العملاء', fmt(L.length))}
       ${mini('موبايل / واتساب', fmt(L.filter((l) => l.mobile).length))}
@@ -818,7 +821,7 @@
         <div class="chat-head"><span class="ai-badge">${icon('sparkles')}</span><div><h3>مساعد المبيعات</h3><small id="chat-model">احكيلي عن أي مشكلة واجهتك وبعطيك الحل</small></div></div>
         <div class="chat-log" id="chat-log"></div>
         <form class="composer" id="composer">
-          <textarea id="chat-input" class="textarea" rows="1" placeholder="اكتب مشكلتك أو سؤالك... (Enter للإرسال)"></textarea>
+          <textarea id="chat-input" class="textarea" rows="1" placeholder="اكتب مشكلتك أو سؤالك..."></textarea>
           <button class="btn btn-primary btn-lg" type="submit" id="chat-send">${icon('send')} إرسال</button>
         </form>
       </section>
@@ -858,7 +861,8 @@
     const log = $('#chat-log');
     if (!log) return;
     if (!state.chat.length && !chatBusy) {
-      log.innerHTML = `<div class="chat-welcome"><span class="ai-badge">${icon('sparkles')}</span><h3>شو المشكلة اللي واجهتك؟</h3><p>اسألني عن رد على اعتراض، رسالة واتساب، تسعير، أولويات العملاء، أو أي إشي علق معك.</p></div>`;
+      log.innerHTML = `<div class="chat-welcome"><span class="ai-badge">${icon('sparkles')}</span><h3>شو المشكلة اللي واجهتك؟</h3><p>اسألني عن رد على اعتراض، رسالة واتساب، تسعير، أولويات العملاء، أو أي إشي علق معك.</p>
+        <div class="welcome-qp">${QUICK.slice(0, 4).map((q) => `<button class="qp" data-qp="${esc(q)}">${esc(q)}</button>`).join('')}</div></div>`;
       return;
     }
     log.innerHTML = state.chat.map((m, i) => m.role === 'user'
@@ -996,7 +1000,7 @@
     const periodLbl = PERIODS.find((p) => p[0] === R.period)[1];
     const log = D.acts.slice().sort((a, b) => b.t - a.t);
     const shownLog = R.logAll ? log : log.slice(0, 40);
-    mounts.push(mountArea);
+    mounts.push(mountArea, labelTables);
     const row = (l, cells) => `<tr data-open="${l.id}">${cells.map((c) => `<td>${c}</td>`).join('')}</tr>`;
     const nameCell = (l) => `<div class="cell-name" style="min-width:180px">${avatar(l.name)}<div><b>${esc(l.name)}</b><small>${esc(l.type || l.sector)} · ${esc(l.city)}</small></div></div>`;
     const empty = (cols, msg) => `<tr><td colspan="${cols}"><div class="empty">${msg}</div></td></tr>`;
@@ -1006,7 +1010,7 @@
         <td class="num">${p.note}</td><td class="num">${p.status}</td>
         <td class="strong num">${p.won}</td><td class="strong num">${fmt(p.revenue)} د.أ</td></tr>`).join('');
     return `
-    ${header(`تقرير ${periodLbl}`, 'تقرير الإدارة', { search: false, actions: `<button class="btn btn-ghost" data-action="report-export">${icon('download')} تصدير التقرير</button>` })}
+    ${header(`تقرير ${periodLbl}`, 'تقرير الإدارة', { search: false, actions: `<button class="btn btn-ghost" data-action="report-export" aria-label="تصدير التقرير">${icon('download')}<span class="lbl">تصدير التقرير</span></button>` })}
     <section class="card"><div class="report-filters">
       <div class="seg">${PERIODS.map(([k, t]) => `<button class="${R.period === k ? 'on' : ''}" data-action="report-period" data-p="${k}">${t}</button>`).join('')}</div>
       <select class="select" data-rfilter="by" aria-label="الموظف"><option value="">كل الفريق</option>${D.names.map((n) => `<option ${R.by === n ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
@@ -1072,6 +1076,12 @@
     </div>`;
   };
 
+  function labelTables() {
+    for (const t of $$('table.rt')) {
+      const heads = $$('thead th', t).map((th) => th.textContent.trim());
+      for (const tr of $$('tbody tr', t)) $$('td', tr).forEach((td, i) => { if (heads[i]) td.dataset.label = heads[i]; });
+    }
+  }
   function exportReport() {
     const D = reportData();
     if (!window.XLSX) { toast('مكتبة Excel ما حمّلت — تأكد من الإنترنت'); return; }
@@ -1409,7 +1419,10 @@
     mounts.length = 0;
     hideTip();
     $('#main').innerHTML = (VIEWS[view] || VIEWS.overview)();
-    $$('#nav a, .nav-settings').forEach((a) => a.classList.toggle('active', a.dataset.view === view));
+    $$('#nav a, .nav-settings, .tabbar [data-view], .more-sheet [data-view]').forEach((a) => a.classList.toggle('active', a.dataset.view === view));
+    const inMore = ['inventory', 'report', 'settings'].includes(view);
+    const more = $('.tab-more'); if (more) more.classList.toggle('active', inMore);
+    closeMore();
     updateBadge();
     updateSyncUi();
     mounts.forEach((fn) => fn());
@@ -1417,8 +1430,10 @@
   }
   function updateBadge() {
     const d = stats().due;
-    const b = $('#badge-due'); b.hidden = !d; b.textContent = d;
+    for (const id of ['badge-due', 'badge-due-2']) { const b = document.getElementById(id); if (b) { b.hidden = !d; b.textContent = d; } }
   }
+  function openMore() { $('#more-sheet').hidden = false; $('#more-backdrop').hidden = false; requestAnimationFrame(() => $('#more-sheet').classList.add('open')); }
+  function closeMore() { const m = $('#more-sheet'); if (!m || m.hidden) return; m.classList.remove('open'); $('#more-backdrop').hidden = true; setTimeout(() => { m.hidden = true; }, 180); }
   function refresh() {
     if (view === 'leads' && $('#leads-body')) { renderLeadsTable(); if (drawerId) renderDrawer(); }
     else render();
@@ -1438,7 +1453,7 @@
   }
 
   // ---------- events ----------
-  const VIEWER_ACTIONS = new Set(['close-drawer', 'copy', 'theme', 'logout', 'sync-now', 'close-modal', 'area-days', 'report-period', 'report-export', 'report-more']);
+  const VIEWER_ACTIONS = new Set(['close-drawer', 'copy', 'theme', 'logout', 'sync-now', 'close-modal', 'area-days', 'report-period', 'report-export', 'report-more', 'more']);
   document.addEventListener('click', (e) => {
     const t = e.target;
     const actEl = t.closest('[data-action]');
@@ -1480,6 +1495,8 @@
         }
         case 'due': goLeads([['due', 'true']]); return;
         case 'area-days': areaDays = +actEl.dataset.days; render(); return;
+        case 'more': { const m = $('#more-sheet'); if (m.hidden) openMore(); else closeMore(); return; }
+        case 'toggle-filters': $('#leads-toolbar').classList.toggle('open'); return;
         case 'report-period': R.period = actEl.dataset.p; R.logAll = false; render(); return;
         case 'report-more': R.logAll = true; render(); return;
         case 'report-export': if (IS_NATIVE) { download(); return; } exportReport(); return;
@@ -1524,6 +1541,7 @@
     const op = t.closest('[data-open]');
     if (op) openLead(op.dataset.open);
     if (t.id === 'drawer-backdrop') closeDrawer();
+    if (t.id === 'more-backdrop') closeMore();
     if (t.id === 'modal') closeModal();
   });
 
