@@ -1,5 +1,5 @@
 // كاش بسيط للواجهة عشان تفتح بسرعة وبدون نت. طلبات /api ما بتتخزن أبداً.
-const CACHE = 'zl-shell-v2';
+const CACHE = 'zl-shell-v3';
 const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'merge.js', 'config.js', 'manifest.webmanifest', 'icons/icon-192.png'];
 
 self.addEventListener('install', (e) => {

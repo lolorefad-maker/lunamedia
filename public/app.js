@@ -142,7 +142,9 @@
   let AUTH = { base: normBase(CFG.apiBase), token: '', role: 'admin', user: '' };
   try { AUTH = { ...AUTH, ...JSON.parse(localStorage.getItem(AUTH_KEY) || '{}') }; } catch (e) { /* ignore */ }
   const saveAuth = () => { try { localStorage.setItem(AUTH_KEY, JSON.stringify(AUTH)); } catch (e) { /* ignore */ } };
-  const isViewer = () => AUTH.role === 'viewer';
+  const roleFromToken = (t) => (String(t || '').match(/^(admin|viewer)\./) || [])[1];
+  if (roleFromToken(AUTH.token)) AUTH.role = roleFromToken(AUTH.token);
+  const isViewer = () => (roleFromToken(AUTH.token) || AUTH.role) === 'viewer';
   let SERVER_STATUS = null;
 
   async function apiFetch(p, opts = {}) {
@@ -158,7 +160,7 @@
     }
     const j = await res.json().catch(() => ({}));
     if (res.status === 401 && AUTH.token) { logout('انتهت الجلسة، سجّل دخول من جديد'); throw new Error('انتهت الجلسة'); }
-    if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
+    if (!res.ok) throw Object.assign(new Error(j.error || `HTTP ${res.status}`), { status: res.status });
     return j;
   }
 
@@ -204,7 +206,13 @@
       const changed = applyRemote(r.state);
       SYNC.last = Date.now(); SYNC.err = '';
       if (changed) softRefresh();
-    } catch (e) { SYNC.err = e.message; }
+    } catch (e) {
+      SYNC.err = e.message;
+      if (e.status === 403 && !isViewer()) { // السيرفر بيقول هاد حساب عرض فقط
+        AUTH.role = 'viewer'; saveAuth(); SYNC.err = '';
+        showApp(); route(); setTimeout(syncNow, 300);
+      }
+    }
     finally {
       SYNC.busy = false; updateSyncUi();
       if (SYNC.dirty) scheduleSync(4000);
@@ -212,12 +220,13 @@
   }
   function syncText() {
     if (!AUTH.token) return 'مش مسجّل دخول';
-    if (SYNC.busy) return 'عم يزامن...';
-    if (SYNC.err) return 'مش متصل — التعديلات محفوظة على الجهاز';
-    return SYNC.last ? `متزامن · ${relTime(SYNC.last)}` : 'لسا ما زامن';
+    if (SYNC.busy) return isViewer() ? 'عم يحدّث...' : 'عم يزامن...';
+    if (SYNC.err) return isViewer() ? `ما قدرت أحدّث: ${SYNC.err}` : `مش متصل (${SYNC.err}) — التعديلات محفوظة على الجهاز`;
+    if (!SYNC.last) return 'لسا ما زامن';
+    return isViewer() ? `محدّث من السيرفر · ${relTime(SYNC.last)}` : `متزامن · ${relTime(SYNC.last)}`;
   }
   function updateSyncUi() {
-    for (const id of ['sync-status', 'sync-status-2']) { const el = document.getElementById(id); if (el) el.textContent = syncText(); }
+    for (const id of ['sync-status', 'sync-status-2']) { const el = document.getElementById(id); if (el) { el.textContent = syncText(); el.title = SYNC.err || ''; el.dataset.err = SYNC.err || ''; } }
     const card = document.querySelector('.side-card');
     if (card) card.classList.toggle('offline', !!SYNC.err);
   }
@@ -1615,7 +1624,7 @@
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
       const user = $('#login-user').value.trim() || (j.role === 'viewer' ? 'HR' : state.settings.name || '');
-      AUTH = { base, token: j.token, role: j.role || 'admin', user }; saveAuth();
+      AUTH = { base, token: j.token, role: j.role || roleFromToken(j.token) || 'admin', user }; saveAuth();
       $('#login-pass').value = '';
       msg.textContent = 'عم بنزّل العملاء...';
       await loadLeads();
@@ -1634,6 +1643,9 @@
   window.addEventListener('online', () => syncNow());
   setInterval(() => { if (document.visibilityState === 'visible' && !SYNC.busy) syncNow(); }, 60000);
   if ('serviceWorker' in navigator && !IS_NATIVE && /^https:|^http:\/\/(localhost|127\.0\.0\.1)/.test(location.href)) {
+    const hadController = !!navigator.serviceWorker.controller;
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController && !reloaded) { reloaded = true; location.reload(); } });
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
   loadSeedCache();
